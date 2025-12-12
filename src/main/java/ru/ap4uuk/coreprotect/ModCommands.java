@@ -1,31 +1,33 @@
 package ru.ap4uuk.coreprotect;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.suggestion.SuggestionProvider;
+import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import ru.ap4uuk.coreprotect.command.CoParamParser;
+import ru.ap4uuk.coreprotect.command.CommandVariableResolver;
+import ru.ap4uuk.coreprotect.command.RollbackParams;
 import ru.ap4uuk.coreprotect.inspect.InspectManager;
-import net.minecraft.core.BlockPos;
-import net.minecraft.world.level.Level;
+import ru.ap4uuk.coreprotect.inspect.InspectTool;
+import ru.ap4uuk.coreprotect.permissions.EnumPermissions;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager;
+import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbForwardAction;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbRollbackAction;
 import ru.ap4uuk.coreprotect.util.ActionContext;
-import com.mojang.brigadier.arguments.StringArgumentType;
-import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbForwardAction;
-import com.mojang.brigadier.suggestion.SuggestionProvider;
-import com.mojang.brigadier.suggestion.Suggestions;
-import net.minecraft.commands.SharedSuggestionProvider;
-import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.entity.player.Inventory;
-import ru.ap4uuk.coreprotect.inspect.InspectTool;
-import net.minecraft.ChatFormatting;
+import ru.ap4uuk.coreprotect.util.TextUtil;
 
-import ru.ap4uuk.coreprotect.command.RollbackParams;
 import java.time.Instant;
 import java.util.List;
 
@@ -45,6 +47,7 @@ public class ModCommands {
 
         // Начинаем с базовых шаблонов параметров
         List<String> suggestions = new java.util.ArrayList<>();
+        List<String> variableSuggestions = List.of("{x}", "{y}", "{z}", "{world}", "{dim}", "{player}", "{user}");
 
         // Если только начали писать или пусто — даём все ключи
         if (token.isEmpty()) {
@@ -54,6 +57,7 @@ public class ModCommands {
             suggestions.add("r:10");
             suggestions.add("u:");
             suggestions.add("id:");
+            suggestions.addAll(variableSuggestions);
         } else {
             // time
             if ("t:".startsWith(tokenLower) || tokenLower.startsWith("t:")) {
@@ -92,12 +96,18 @@ public class ModCommands {
                 suggestions.add("id:3");
             }
 
+            // Плейсхолдеры значений (координаты, мир, игрок)
+            if (tokenLower.startsWith("{")) {
+                suggestions.addAll(variableSuggestions);
+            }
+
             // Если токен вообще не начинается ни с какого ключа, можно подбросить все "t:/r:/u:/id:"
             if (suggestions.isEmpty()) {
                 suggestions.add("t:10m");
                 suggestions.add("r:10");
                 suggestions.add("u:");
                 suggestions.add("id:");
+                suggestions.addAll(variableSuggestions);
             }
         }
 
@@ -116,53 +126,44 @@ public class ModCommands {
 
         dispatcher.register(
                 Commands.literal("co")
-                        // /co inspect
                         .then(Commands.literal("inspect")
+                                .requires(src -> EnumPermissions.INSPECT.hasPermission(src))
                                 .executes(ctx -> {
                                     ServerPlayer player = ctx.getSource().getPlayerOrException();
                                     boolean on = InspectManager.toggleInspect(player);
-
-                                    Component msg = Component.literal(
-                                            "[Coreprotect] Режим инспекции " + (on ? "включён." : "выключен.")
-                                    );
+                                    Component msg = TextUtil.translate(on
+                                            ? "message.coreprotect.inspect.enabled"
+                                            : "message.coreprotect.inspect.disabled");
                                     player.sendSystemMessage(msg);
-
                                     return 1;
                                 })
                         )
-                        // /co rollback <params>
                         .then(Commands.literal("rollback")
+                                .requires(src -> EnumPermissions.ROLLBACK.hasPermission(src))
                                 .then(Commands.argument("params", StringArgumentType.greedyString())
-                                        .suggests(CO_PARAM_SUGGESTIONS) // <-- вот тут подсказки
+                                        .suggests(CO_PARAM_SUGGESTIONS)
                                         .executes(ctx -> {
                                             ServerPlayer player = ctx.getSource().getPlayerOrException();
                                             String paramsStr = StringArgumentType.getString(ctx, "params");
+                                            paramsStr = CommandVariableResolver.resolve(player, paramsStr);
                                             return executeRollback(player, paramsStr);
                                         })
                                 )
                         )
-                        // /co restore <params>
                         .then(Commands.literal("restore")
+                                .requires(src -> EnumPermissions.RESTORE.hasPermission(src))
                                 .then(Commands.argument("params", StringArgumentType.greedyString())
-                                        .suggests(CO_PARAM_SUGGESTIONS) // <-- и тут
+                                        .suggests(CO_PARAM_SUGGESTIONS)
                                         .executes(ctx -> {
                                             ServerPlayer player = ctx.getSource().getPlayerOrException();
                                             String paramsStr = StringArgumentType.getString(ctx, "params");
+                                            paramsStr = CommandVariableResolver.resolve(player, paramsStr);
                                             return executeRestore(player, paramsStr);
                                         })
                                 )
                         )
-        );
-        dispatcher.register(
-                Commands.literal("co")
-                        // /co inspect (старый режим)
-                        .then(Commands.literal("inspect") /* ... как было ... */)
-                        // /co rollback ...
-                        .then(Commands.literal("rollback") /* ... */)
-                        // /co restore ...
-                        .then(Commands.literal("restore") /* ... */)
-                        // /co tb — выдать / забрать инспекционный блок
                         .then(Commands.literal("tb")
+                                .requires(src -> EnumPermissions.TOOL.hasPermission(src))
                                 .executes(ctx -> {
                                     ServerPlayer player = ctx.getSource().getPlayerOrException();
                                     toggleToolBlock(player);
@@ -188,8 +189,7 @@ public class ModCommands {
         if (foundSlot >= 0) {
             // забираем
             inv.removeItem(foundSlot, inv.getItem(foundSlot).getCount());
-            player.sendSystemMessage(Component.literal("[Coreprotect] Инспекционный блок убран.")
-                    .withStyle(ChatFormatting.YELLOW));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.tool_removed"));
         } else {
             // выдаём
             ItemStack tool = InspectTool.createToolStack();
@@ -198,15 +198,14 @@ public class ModCommands {
                 // инвентарь забит — бросаем под ноги, но всё равно недропабельный через наши эвенты
                 player.drop(tool, false);
             }
-            player.sendSystemMessage(Component.literal("[Coreprotect] Выдан инспекционный блок.")
-                    .withStyle(ChatFormatting.AQUA));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.tool_given"));
         }
     }
 
     private static int executeRollback(ServerPlayer player, String paramsStr) {
         DatabaseManager db = DatabaseManager.get();
         if (db == null) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] БД недоступна."));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.db_unavailable"));
             return 0;
         }
 
@@ -214,7 +213,7 @@ public class ModCommands {
         try {
             params = CoParamParser.parse(paramsStr);
         } catch (IllegalArgumentException e) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] Ошибка параметров: " + e.getMessage()));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.params_error", e.getMessage()));
             return 0;
         }
 
@@ -237,15 +236,23 @@ public class ModCommands {
                 sessionParamsText
         );
         if (sessionId <= 0) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] Не удалось создать rollback-сессию."));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.rollback.session_failed"));
             return 0;
         }
 
-        player.sendSystemMessage(Component.literal(
-                "[Coreprotect] Rollback (session " + sessionId + "): r=" + radius +
-                        ", t=" + seconds + "s" +
-                        (playerFilter != null ? (", u=" + playerFilter) : "") +
-                        " ..."
+        Component filter = playerFilter == null
+                ? Component.empty()
+                : Component.translatable(
+                        "message.coreprotect.filter.user",
+                        Component.literal(playerFilter).withStyle(ChatFormatting.AQUA)
+                ).withStyle(ChatFormatting.GRAY);
+
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.rollback.start",
+                Component.literal(String.valueOf(sessionId)).withStyle(ChatFormatting.AQUA),
+                Component.literal(String.valueOf(radius)).withStyle(ChatFormatting.GOLD),
+                Component.literal(String.valueOf(seconds)).withStyle(ChatFormatting.GOLD),
+                filter
         ));
 
         List<DbRollbackAction> actions = db.getActionsForRollback(
@@ -253,7 +260,7 @@ public class ModCommands {
         );
 
         if (actions.isEmpty()) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] Нечего откатывать в заданной зоне/интервале."));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.rollback.empty"));
             return 1;
         }
 
@@ -283,9 +290,10 @@ public class ModCommands {
             ActionContext.setRollbackInProgress(false);
         }
 
-        player.sendSystemMessage(Component.literal(
-                "[Coreprotect] Rollback завершён. Сессия #" + sessionId +
-                        ", применено изменений: " + applied
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.rollback.complete",
+                Component.literal(String.valueOf(sessionId)).withStyle(ChatFormatting.AQUA),
+                Component.literal(String.valueOf(applied)).withStyle(ChatFormatting.GOLD)
         ));
 
         return applied;
@@ -295,7 +303,7 @@ public class ModCommands {
     private static int executeRestore(ServerPlayer player, String paramsStr) {
         DatabaseManager db = DatabaseManager.get();
         if (db == null) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] БД недоступна."));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.db_unavailable"));
             return 0;
         }
 
@@ -303,7 +311,7 @@ public class ModCommands {
         try {
             params = CoParamParser.parse(paramsStr);
         } catch (IllegalArgumentException e) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] Ошибка параметров: " + e.getMessage()));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.params_error", e.getMessage()));
             return 0;
         }
 
@@ -323,11 +331,14 @@ public class ModCommands {
         long now = Instant.now().getEpochSecond();
         long since = now - seconds;
 
-        player.sendSystemMessage(Component.literal(
-                "[Coreprotect] Restore: r=" + radius +
-                        ", t=" + seconds + "s" +
-                        (playerFilter != null ? (", u=" + playerFilter) : "") +
-                        " ..."
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.restore.start",
+                Component.literal(String.valueOf(radius)).withStyle(ChatFormatting.GOLD),
+                Component.literal(String.valueOf(seconds)).withStyle(ChatFormatting.GOLD),
+                playerFilter == null ? Component.empty() : Component.translatable(
+                        "message.coreprotect.filter.user",
+                        Component.literal(playerFilter).withStyle(ChatFormatting.AQUA)
+                ).withStyle(ChatFormatting.GRAY)
         ));
 
         List<DbForwardAction> actions = db.getActionsForRestore(
@@ -335,7 +346,7 @@ public class ModCommands {
         );
 
         if (actions.isEmpty()) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] Нечего восстанавливать в заданной зоне/интервале."));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.restore.empty"));
             return 1;
         }
 
@@ -353,8 +364,9 @@ public class ModCommands {
             ActionContext.setRollbackInProgress(false);
         }
 
-        player.sendSystemMessage(Component.literal(
-                "[Coreprotect] Restore завершён. Применено изменений: " + applied
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.restore.complete",
+                Component.literal(String.valueOf(applied)).withStyle(ChatFormatting.GOLD)
         ));
 
         return applied;
@@ -362,18 +374,22 @@ public class ModCommands {
     private static int executeRestoreSession(ServerPlayer player, int sessionId) {
         DatabaseManager db = DatabaseManager.get();
         if (db == null) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] БД недоступна."));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.db_unavailable"));
             return 0;
         }
 
         List<DatabaseManager.RollbackSessionEntry> entries = db.getRollbackEntries(sessionId);
         if (entries.isEmpty()) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] Сессия #" + sessionId + " не найдена или пуста."));
+            player.sendSystemMessage(TextUtil.translate(
+                    "message.coreprotect.restore.session_not_found",
+                    Component.literal(String.valueOf(sessionId)).withStyle(ChatFormatting.AQUA)
+            ));
             return 0;
         }
 
-        player.sendSystemMessage(Component.literal(
-                "[Coreprotect] Restore сессии #" + sessionId + "..."
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.restore.session_start",
+                Component.literal(String.valueOf(sessionId)).withStyle(ChatFormatting.AQUA)
         ));
 
         int applied = 0;
@@ -396,8 +412,10 @@ public class ModCommands {
 
         db.markSessionRestored(sessionId);
 
-        player.sendSystemMessage(Component.literal(
-                "[Coreprotect] Restore сессии #" + sessionId + " завершён. Изменений: " + applied
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.restore.session_complete",
+                Component.literal(String.valueOf(sessionId)).withStyle(ChatFormatting.AQUA),
+                Component.literal(String.valueOf(applied)).withStyle(ChatFormatting.GOLD)
         ));
 
         return applied;

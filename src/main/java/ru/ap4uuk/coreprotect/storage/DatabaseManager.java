@@ -195,7 +195,8 @@ public final class DatabaseManager {
 
     public synchronized List<DbBlockAction> getBlockHistory(ResourceKey<Level> dimension,
                                                             BlockPos pos,
-                                                            int limit) {
+                                                            int limit,
+                                                            int offset) {
         List<DbBlockAction> result = new ArrayList<>();
         if (connection == null) return result;
 
@@ -204,7 +205,7 @@ public final class DatabaseManager {
             FROM block_actions
             WHERE dimension = ? AND x = ? AND y = ? AND z = ?
             ORDER BY time_epoch DESC
-            LIMIT ?;
+            LIMIT ? OFFSET ?;
             """;
 
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
@@ -213,6 +214,7 @@ public final class DatabaseManager {
             ps.setInt(3, pos.getY());
             ps.setInt(4, pos.getZ());
             ps.setInt(5, limit);
+            ps.setInt(6, offset);
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
