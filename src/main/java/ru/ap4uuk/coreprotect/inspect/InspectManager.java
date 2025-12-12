@@ -1,6 +1,9 @@
 package ru.ap4uuk.coreprotect.inspect;
 
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
 
 import java.util.Set;
 import java.util.UUID;
@@ -9,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class InspectManager {
 
     private static final Set<UUID> INSPECTING = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentHashMap<UUID, InspectSession> INSPECT_SESSIONS = new ConcurrentHashMap<>();
 
     private InspectManager() {}
 
@@ -29,9 +33,36 @@ public final class InspectManager {
 
     public static void disable(ServerPlayer player) {
         INSPECTING.remove(player.getUUID());
+        INSPECT_SESSIONS.remove(player.getUUID());
     }
 
     public static void clear() {
         INSPECTING.clear();
+        INSPECT_SESSIONS.clear();
+    }
+
+    public static InspectSession getSession(ServerPlayer player, ResourceKey<Level> dimension, BlockPos pos, boolean advancePage) {
+        UUID uuid = player.getUUID();
+        InspectSession current = INSPECT_SESSIONS.get(uuid);
+
+        if (current != null && current.sameTarget(dimension, pos)) {
+            int nextPage = advancePage ? current.page() + 1 : 0;
+            current = new InspectSession(dimension, pos, nextPage);
+        } else {
+            current = new InspectSession(dimension, pos, 0);
+        }
+
+        INSPECT_SESSIONS.put(uuid, current);
+        return current;
+    }
+
+    public static void resetPagination(ServerPlayer player) {
+        INSPECT_SESSIONS.remove(player.getUUID());
+    }
+
+    public record InspectSession(ResourceKey<Level> dimension, BlockPos pos, int page) {
+        public boolean sameTarget(ResourceKey<Level> otherDimension, BlockPos otherPos) {
+            return dimension.equals(otherDimension) && pos.equals(otherPos);
+        }
     }
 }

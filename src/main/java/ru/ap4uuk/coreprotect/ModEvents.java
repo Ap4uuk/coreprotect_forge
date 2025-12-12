@@ -1,9 +1,16 @@
 package ru.ap4uuk.coreprotect;
 
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraftforge.event.entity.item.ItemTossEvent;
+import net.minecraftforge.event.entity.living.LivingDropsEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
@@ -12,21 +19,12 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import ru.ap4uuk.coreprotect.config.CoreprotectConfig;
 import ru.ap4uuk.coreprotect.inspect.InspectManager;
+import ru.ap4uuk.coreprotect.inspect.InspectTool;
 import ru.ap4uuk.coreprotect.model.BlockAction;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbBlockAction;
 import ru.ap4uuk.coreprotect.util.ActionContext;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.InteractionHand;
-import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.event.entity.player.PlayerInteractEvent;
-import net.minecraftforge.event.entity.item.ItemTossEvent;
-import net.minecraftforge.event.entity.living.LivingDropsEvent;
-import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.entity.LivingEntity;
-
-import ru.ap4uuk.coreprotect.inspect.InspectTool;
-
+import ru.ap4uuk.coreprotect.util.TextUtil;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -210,36 +208,69 @@ public class ModEvents {
     private static void inspectPos(ServerPlayer player, Level level, BlockPos pos) {
         var db = DatabaseManager.get();
         if (db == null) {
-            player.sendSystemMessage(Component.literal("[Coreprotect] БД недоступна."));
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.db_unavailable"));
             return;
         }
 
-        int limit = CoreprotectConfig.COMMON.inspectHistoryLimit.get();
-        List<DbBlockAction> history = db.getBlockHistory(level.dimension(), pos, limit);
+        int pageSize = CoreprotectConfig.COMMON.inspectHistoryLimit.get();
+        boolean advancePage = player.isShiftKeyDown();
+        InspectManager.InspectSession session = InspectManager.getSession(player, level.dimension(), pos, advancePage);
+        int offset = session.page() * pageSize;
 
-        player.sendSystemMessage(Component.literal(
-                "[Coreprotect] История блока " +
-                        level.dimension().location() + " " +
-                        pos.getX() + "," + pos.getY() + "," + pos.getZ()
-        ));
+        List<DbBlockAction> history = db.getBlockHistory(level.dimension(), pos, pageSize + 1, offset);
+        boolean hasNext = history.size() > pageSize;
+        if (hasNext) {
+            history = history.subList(0, pageSize);
+        }
 
         if (history.isEmpty()) {
-            player.sendSystemMessage(Component.literal("  Нет записей."));
+            if (session.page() > 0) {
+                InspectManager.resetPagination(player);
+                player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.no_more_pages"));
+            } else {
+                player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.no_records"));
+            }
             return;
         }
 
+        Component header = TextUtil.translate(
+                "message.coreprotect.inspect.header",
+                Component.literal(level.dimension().location().toString()).withStyle(ChatFormatting.AQUA),
+                Component.literal(pos.getX() + "," + pos.getY() + "," + pos.getZ()).withStyle(ChatFormatting.WHITE)
+        );
+        player.sendSystemMessage(header);
+
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.inspect.page",
+                Component.literal(String.valueOf(session.page() + 1)).withStyle(ChatFormatting.GOLD)
+        ));
+
         for (DbBlockAction h : history) {
-            String ts = TIME_FORMATTER.format(Instant.ofEpochSecond(h.timeEpoch));
-            String line = String.format(
-                    "  %s | %s | %s | %s -> %s",
-                    ts,
-                    h.playerName,
-                    h.actionType,
-                    h.oldBlock == null ? "air" : h.oldBlock,
-                    h.newBlock == null ? "air" : h.newBlock
-            );
-            player.sendSystemMessage(Component.literal(line));
+            player.sendSystemMessage(formatHistoryLine(h));
         }
+
+        if (hasNext) {
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.next_hint"));
+        }
+    }
+
+    private static Component formatHistoryLine(DbBlockAction history) {
+        String ts = TIME_FORMATTER.format(Instant.ofEpochSecond(history.timeEpoch));
+
+        Component time = Component.literal(ts).withStyle(ChatFormatting.GRAY);
+        Component playerName = Component.literal(history.playerName).withStyle(ChatFormatting.AQUA);
+        Component action = TextUtil.actionName(history.actionType);
+        Component oldBlock = TextUtil.blockName(history.oldBlock);
+        Component newBlock = TextUtil.blockName(history.newBlock);
+
+        return TextUtil.prefixed(Component.translatable(
+                "message.coreprotect.inspect.line",
+                time,
+                playerName,
+                action,
+                oldBlock,
+                newBlock
+        ));
     }
 
     @SubscribeEvent
@@ -253,9 +284,7 @@ public class ModEvents {
 
             if (event.getPlayer() instanceof ServerPlayer player) {
                 player.getInventory().add(stack);
-                player.sendSystemMessage(
-                        Component.literal("[Coreprotect] Инспекционный блок нельзя выбросить.")
-                );
+                player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.tool_drop_denied"));
             }
         }
     }
