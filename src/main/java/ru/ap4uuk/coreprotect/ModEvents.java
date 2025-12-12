@@ -8,7 +8,6 @@ import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -32,8 +31,8 @@ import ru.ap4uuk.coreprotect.storage.DatabaseManager;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbBlockAction;
 import ru.ap4uuk.coreprotect.util.ActionContext;
 import ru.ap4uuk.coreprotect.util.BlockLogging;
-import ru.ap4uuk.coreprotect.util.HistoryFormatter;
 import ru.ap4uuk.coreprotect.util.ContainerSnapshotUtil;
+import ru.ap4uuk.coreprotect.util.HistoryFormatter;
 import ru.ap4uuk.coreprotect.util.TextUtil;
 import ru.ap4uuk.coreprotect.util.WorldEditIntegration;
 
@@ -44,6 +43,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -54,7 +54,9 @@ import static ru.ap4uuk.coreprotect.Coreprotect.MODID;
 @Mod.EventBusSubscriber(modid = MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class ModEvents {
 
-    private static final Map<ContainerKey, ContainerSnapshot> CONTAINER_SNAPSHOTS = new ConcurrentHashMap<>();
+    // Снапшоты контейнеров: берём BEFORE на клике, AFTER на закрытии меню
+    private static final Map<UUID, ContainerSnapshot> CONTAINER_SNAPSHOTS = new ConcurrentHashMap<>();
+
     private static final Map<PistonKey, List<PistonMove>> PISTON_MOVES = new ConcurrentHashMap<>();
     private static final AtomicBoolean SERVER_INITIALIZED = new AtomicBoolean(false);
 
@@ -71,6 +73,8 @@ public class ModEvents {
         DatabaseManager.shutdown();
         LOGGER.info("[Coreprotect] База данных остановлена.");
         SERVER_INITIALIZED.set(false);
+        CONTAINER_SNAPSHOTS.clear();
+        PISTON_MOVES.clear();
     }
 
     private static void initializeServer() {
@@ -98,23 +102,12 @@ public class ModEvents {
 
     @SubscribeEvent
     public static void onBlockBreak(BlockEvent.BreakEvent event) {
-        if (ActionContext.isRollbackInProgress()) {
-            return;
-        }
-        if (!(event.getPlayer() instanceof ServerPlayer player)) {
-            return;
-        }
+        if (ActionContext.isRollbackInProgress()) return;
+        if (!(event.getPlayer() instanceof ServerPlayer player)) return;
 
         Level level = (Level) event.getLevel();
         BlockPos pos = event.getPos();
-
-        var state = event.getState();
-
-        LOGGER.debug("[Coreprotect] BREAK: player={}, dim={}, pos=({}, {}, {})",
-                player.getGameProfile().getName(),
-                level.dimension().location(),
-                pos.getX(), pos.getY(), pos.getZ()
-        );
+        BlockState state = event.getState();
 
         var action = new BlockAction(
                 BlockAction.Type.BREAK,
@@ -122,37 +115,25 @@ public class ModEvents {
                 player.getGameProfile().getName(),
                 level.dimension(),
                 pos,
-                state,      // oldState — блок, который был
-                null,       // newState — после break нет блока
+                state,
+                null,
                 Instant.now()
         );
 
         var db = DatabaseManager.get();
-        if (db != null) {
-            db.logBlockAction(action);
-        }
+        if (db != null) db.logBlockAction(action);
     }
 
     @SubscribeEvent
     public static void onBlockPlace(BlockEvent.EntityPlaceEvent event) {
-        if (ActionContext.isRollbackInProgress()) {
-            return;
-        }
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
+        if (ActionContext.isRollbackInProgress()) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
 
         Level level = (Level) event.getLevel();
         BlockPos pos = event.getPos();
 
-        var placedState = event.getPlacedBlock();
-        var oldState = event.getBlockSnapshot().getReplacedBlock();
-
-        LOGGER.debug("[Coreprotect] PLACE: player={}, dim={}, pos=({}, {}, {})",
-                player.getGameProfile().getName(),
-                level.dimension().location(),
-                pos.getX(), pos.getY(), pos.getZ()
-        );
+        BlockState placedState = event.getPlacedBlock();
+        BlockState oldState = event.getBlockSnapshot().getReplacedBlock();
 
         var action = new BlockAction(
                 BlockAction.Type.PLACE,
@@ -160,30 +141,22 @@ public class ModEvents {
                 player.getGameProfile().getName(),
                 level.dimension(),
                 pos,
-                oldState,       // что было до
-                placedState,    // что поставили
+                oldState,
+                placedState,
                 Instant.now()
         );
 
         var db = DatabaseManager.get();
-        if (db != null) {
-            db.logBlockAction(action);
-        }
+        if (db != null) db.logBlockAction(action);
     }
 
     @SubscribeEvent
     public static void onMultiPlace(BlockEvent.EntityMultiPlaceEvent event) {
-        if (ActionContext.isRollbackInProgress()) {
-            return;
-        }
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
+        if (ActionContext.isRollbackInProgress()) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
 
         Level level = (Level) event.getLevel();
-        if (!BlockLogging.isServer(level)) {
-            return;
-        }
+        if (!BlockLogging.isServer(level)) return;
 
         event.getReplacedBlockSnapshots().forEach(snapshot -> {
             BlockPos pos = snapshot.getPos();
@@ -193,27 +166,20 @@ public class ModEvents {
 
     @SubscribeEvent
     public static void onFluidPlace(BlockEvent.FluidPlaceBlockEvent event) {
-        if (ActionContext.isRollbackInProgress()) {
-            return;
-        }
+        if (ActionContext.isRollbackInProgress()) return;
+
         Level level = (Level) event.getLevel();
-        if (!BlockLogging.isServer(level)) {
-            return;
-        }
+        if (!BlockLogging.isServer(level)) return;
 
         BlockLogging.log(level, event.getPos(), event.getOriginalState(), event.getNewState(), BlockAction.Type.FLUID, null);
     }
 
     @SubscribeEvent
     public static void onExplosion(ExplosionEvent.Detonate event) {
-        if (ActionContext.isRollbackInProgress()) {
-            return;
-        }
+        if (ActionContext.isRollbackInProgress()) return;
 
         Level level = event.getLevel();
-        if (!BlockLogging.isServer(level)) {
-            return;
-        }
+        if (!BlockLogging.isServer(level)) return;
 
         ServerPlayer player = event.getExplosion().getIndirectSourceEntity() instanceof ServerPlayer p ? p : null;
         for (BlockPos pos : event.getAffectedBlocks()) {
@@ -224,13 +190,10 @@ public class ModEvents {
 
     @SubscribeEvent
     public static void onPistonPre(PistonEvent.Pre event) {
-        if (ActionContext.isRollbackInProgress()) {
-            return;
-        }
+        if (ActionContext.isRollbackInProgress()) return;
+
         Level level = (Level) event.getLevel();
-        if (!BlockLogging.isServer(level)) {
-            return;
-        }
+        if (!BlockLogging.isServer(level)) return;
 
         var structure = event.getStructureHelper();
         List<PistonMove> moves = structure.getToPush().stream()
@@ -244,26 +207,23 @@ public class ModEvents {
                 })
                 .collect(Collectors.toList());
 
-        structure.getToDestroy().forEach(pos -> moves.add(new PistonMove(pos.immutable(), level.getBlockState(pos), pos.immutable(), level.getBlockState(pos))));
+        structure.getToDestroy().forEach(pos -> moves.add(
+                new PistonMove(pos.immutable(), level.getBlockState(pos), pos.immutable(), level.getBlockState(pos))
+        ));
 
         PISTON_MOVES.put(new PistonKey(level.dimension(), event.getPos().immutable()), moves);
     }
 
     @SubscribeEvent
     public static void onPistonPost(PistonEvent.Post event) {
-        if (ActionContext.isRollbackInProgress()) {
-            return;
-        }
+        if (ActionContext.isRollbackInProgress()) return;
+
         Level level = (Level) event.getLevel();
-        if (!BlockLogging.isServer(level)) {
-            return;
-        }
+        if (!BlockLogging.isServer(level)) return;
 
         PistonKey key = new PistonKey(level.dimension(), event.getPos().immutable());
         List<PistonMove> moves = PISTON_MOVES.remove(key);
-        if (moves == null) {
-            return;
-        }
+        if (moves == null) return;
 
         for (PistonMove move : moves) {
             BlockLogging.log(level, move.sourcePos(), move.oldState(), level.getBlockState(move.sourcePos()), BlockAction.Type.PISTON, null);
@@ -275,21 +235,15 @@ public class ModEvents {
 
     @SubscribeEvent
     public static void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
 
         ItemStack held = player.getItemInHand(event.getHand());
-        if (!InspectTool.isInspectTool(held)) {
-            return;
-        }
+        if (!InspectTool.isInspectTool(held)) return;
 
         // не даём ломать блок инспект-блоком
         event.setCanceled(true);
 
-        if (event.getLevel().isClientSide()) {
-            return;
-        }
+        if (event.getLevel().isClientSide()) return;
 
         Level level = (Level) event.getLevel();
         BlockPos pos = event.getPos();
@@ -299,13 +253,11 @@ public class ModEvents {
 
     @SubscribeEvent
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
 
         ItemStack held = player.getItemInHand(event.getHand());
 
-        // Если в руке инспект-блок — работаем через него
+        // Если в руке инспект-блок — работаем через него (ПКМ смотрит "позицию установки")
         if (InspectTool.isInspectTool(held)) {
             event.setCanceled(true);
 
@@ -316,69 +268,62 @@ public class ModEvents {
 
             Level level = (Level) event.getLevel();
 
-            // Блок, который "должен стоять" — это позиция, куда бы поставился блок при этом ПКМ
             BlockPos base = event.getPos();
             if (event.getFace() != null) {
                 base = base.relative(event.getFace());
             }
-            BlockPos targetPos = base;
 
-            inspectPos(player, level, targetPos);
+            inspectPos(player, level, base);
             player.getInventory().setChanged();
             return;
         }
 
-        // иначе — старый режим /co inspect (по флагу InspectManager)
-        if (!InspectManager.isInspecting(player)) {
-            return;
+        // --- ВАЖНО: трекинг контейнеров (до открытия) ---
+        // Сохраняем снапшот BEFORE именно здесь, потому что PlayerContainerEvent.Open не даёт нормально получить BlockEntity/pos.
+        if (!event.getLevel().isClientSide()) {
+            Level level = (Level) event.getLevel();
+            BlockPos pos = event.getPos();
+            BlockEntity be = level.getBlockEntity(pos);
+            if (be instanceof net.minecraft.world.Container container) {
+                String before = ContainerSnapshotUtil.serializeContainer(container);
+                CONTAINER_SNAPSHOTS.put(player.getUUID(), new ContainerSnapshot(level.dimension(), pos.immutable(), before));
+            }
         }
+
+        // иначе — старый режим /co inspect (по флагу InspectManager)
+        if (!InspectManager.isInspecting(player)) return;
+
+        if (event.getLevel().isClientSide()) return;
 
         Level level = (Level) event.getLevel();
         BlockPos pos = event.getPos();
 
         event.setCanceled(true);
-
         inspectPos(player, level, pos);
     }
 
-    @SubscribeEvent
-    public static void onContainerOpen(PlayerContainerEvent.Open event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
-        ContainerSnapshot snapshot = captureContainer(event.getContainer(), player);
-        if (snapshot != null) {
-            CONTAINER_SNAPSHOTS.put(new ContainerKey(player.getUUID(), event.getContainer().containerId), snapshot);
-        }
-    }
-
+    // Закрыли меню → сравнить снапшоты и залогировать изменения
     @SubscribeEvent
     public static void onContainerClose(PlayerContainerEvent.Close event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
-            return;
-        }
-        ContainerKey key = new ContainerKey(player.getUUID(), event.getContainer().containerId);
-        ContainerSnapshot before = CONTAINER_SNAPSHOTS.remove(key);
-        ContainerSnapshot after = captureContainer(event.getContainer(), player);
+        if (!(event.getEntity() instanceof ServerPlayer player)) return;
+        if (player.level().isClientSide()) return;
 
-        if (before == null || after == null) {
-            return;
-        }
-        if (!Objects.equals(before.dimension(), after.dimension()) || !before.pos().equals(after.pos())) {
-            return;
-        }
-        if (Objects.equals(before.serialized(), after.serialized())) {
-            return;
-        }
+        ContainerSnapshot before = CONTAINER_SNAPSHOTS.remove(player.getUUID());
+        if (before == null) return;
 
-        Level level = player.level();
-        if (!BlockLogging.isServer(level)) {
-            return;
-        }
+        Level level = player.serverLevel();
+        if (!Objects.equals(level.dimension(), before.dimension)) return;
 
-        BlockLogging.log(level, before.pos(), before.serialized(), after.serialized(), BlockAction.Type.CONTAINER, player);
+        BlockEntity be = level.getBlockEntity(before.pos);
+        if (!(be instanceof net.minecraft.world.Container container)) return;
+
+        String after = ContainerSnapshotUtil.serializeContainer(container);
+        if (Objects.equals(before.serialized, after)) return;
+
+        if (!BlockLogging.isServer(level)) return;
+
+        BlockLogging.log(level, before.pos, before.serialized, after, BlockAction.Type.CONTAINER, player);
     }
-
 
     private static void inspectPos(ServerPlayer player, Level level, BlockPos pos) {
         var db = DatabaseManager.get();
@@ -429,13 +374,14 @@ public class ModEvents {
         }
     }
 
+    // ---------- Защита инспект-блока ----------
+
     @SubscribeEvent
     public static void onItemToss(ItemTossEvent event) {
-        ItemEntity entity = event.getEntity();          // вместо getEntityItem()
+        ItemEntity entity = event.getEntity(); // Forge 1.20.1
         ItemStack stack = entity.getItem();
 
         if (InspectTool.isInspectTool(stack)) {
-            // отменяем дроп и возвращаем в инвентарь
             event.setCanceled(true);
 
             if (event.getPlayer() instanceof ServerPlayer player) {
@@ -448,41 +394,16 @@ public class ModEvents {
     @SubscribeEvent
     public static void onPlayerDrops(LivingDropsEvent event) {
         LivingEntity entity = event.getEntity();
-        if (!(entity instanceof ServerPlayer player)) return;
+        if (!(entity instanceof ServerPlayer)) return;
 
-        // убираем инспект-блок из дропа
         event.getDrops().removeIf(itemEntity -> InspectTool.isInspectTool(itemEntity.getItem()));
-        // сам предмет при этом исчезает; после респавна игрок может снова взять /co tb
     }
 
-    private static ContainerSnapshot captureContainer(AbstractContainerMenu menu, ServerPlayer player) {
-        List<Slot> containerSlots = menu.slots.stream()
-                .filter(slot -> slot.container != player.getInventory())
-                .collect(Collectors.toList());
-        if (containerSlots.isEmpty()) {
-            return null;
-        }
-
-        Slot first = containerSlots.get(0);
-        if (!(first.container instanceof BlockEntity blockEntity)) {
-            return null;
-        }
-        Level level = blockEntity.getLevel();
-        if (level == null || !BlockLogging.isServer(level)) {
-            return null;
-        }
-
-        BlockPos pos = blockEntity.getBlockPos().immutable();
-        String serialized = ContainerSnapshotUtil.serializeSlots(containerSlots);
-        return new ContainerSnapshot(level.dimension(), pos, serialized);
-    }
-
-    private record ContainerKey(java.util.UUID playerId, int containerId) {}
+    // ---------- Records ----------
 
     private record ContainerSnapshot(net.minecraft.resources.ResourceKey<Level> dimension, BlockPos pos, String serialized) {}
 
     private record PistonKey(net.minecraft.resources.ResourceKey<Level> dimension, BlockPos pos) {}
 
     private record PistonMove(BlockPos sourcePos, BlockState oldState, BlockPos destPos, BlockState destOldState) {}
-
 }

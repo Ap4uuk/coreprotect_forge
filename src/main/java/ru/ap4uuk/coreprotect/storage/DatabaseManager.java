@@ -17,13 +17,14 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import ru.ap4uuk.coreprotect.Coreprotect;
 import ru.ap4uuk.coreprotect.model.BlockAction;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.sql.*;
 
 public final class DatabaseManager {
 
@@ -34,7 +35,6 @@ public final class DatabaseManager {
     private final BlockingQueue<BlockAction> queue = new LinkedBlockingQueue<>(5000);
     private Thread writerThread;
     private volatile boolean running = true;
-
 
     private DatabaseManager(Connection connection) throws SQLException {
         this.connection = connection;
@@ -51,12 +51,24 @@ public final class DatabaseManager {
         }
 
         try {
+            // 1) пробуем shaded-драйвер
+            boolean driverOk = false;
             try {
-                Class.forName("org.sqlite.JDBC");
-                Coreprotect.LOGGER.info("[Coreprotect] Драйвер SQLite найден: org.sqlite.JDBC");
-            } catch (ClassNotFoundException e) {
-                Coreprotect.LOGGER.error("[Coreprotect] Драйвер SQLite не найден в classpath! Проверь shadow/shade.", e);
-                return;
+                Class.forName("ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC");
+                Coreprotect.LOGGER.info("[Coreprotect] Драйвер SQLite найден (shaded): ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC");
+                driverOk = true;
+            } catch (ClassNotFoundException ignored) {}
+
+            // 2) пробуем обычный
+            if (!driverOk) {
+                try {
+                    Class.forName("org.sqlite.JDBC");
+                    Coreprotect.LOGGER.info("[Coreprotect] Драйвер SQLite найден: org.sqlite.JDBC");
+                    driverOk = true;
+                } catch (ClassNotFoundException e) {
+                    Coreprotect.LOGGER.error("[Coreprotect] Драйвер SQLite не найден в classpath! Проверь shadow/shade.", e);
+                    return;
+                }
             }
 
             if (dbFile.getParent() != null) {
@@ -100,17 +112,16 @@ public final class DatabaseManager {
         writerThread = new Thread(() -> {
             Coreprotect.LOGGER.info("[Coreprotect] Writer thread запущен.");
             final int batchSize = 100;
+
             while (running) {
                 try {
-                    BlockAction first = queue.take(); // блокируемся, пока не придет хотя бы одно событие
-                    // как только получили — собираем батч
+                    BlockAction first = queue.take();
                     int count = 0;
                     do {
                         writeBlockActionInternal(first);
                         count++;
-                        if (count >= batchSize) {
-                            break;
-                        }
+                        if (count >= batchSize) break;
+
                         BlockAction next = queue.poll();
                         if (next == null) break;
                         first = next;
@@ -118,7 +129,6 @@ public final class DatabaseManager {
 
                     connection.commit();
                 } catch (InterruptedException e) {
-                    // выходим, если остановка
                     if (!running) break;
                 } catch (SQLException e) {
                     Coreprotect.LOGGER.error("[Coreprotect] Ошибка batch-записи событий в БД", e);
@@ -130,7 +140,6 @@ public final class DatabaseManager {
                 }
             }
 
-            // финальный дрен очереди
             try {
                 while (!queue.isEmpty()) {
                     BlockAction action = queue.poll();
@@ -172,12 +181,12 @@ public final class DatabaseManager {
         insertBlockStmt.setInt(6, action.pos.getY());
         insertBlockStmt.setInt(7, action.pos.getZ());
         insertBlockStmt.setString(8, action.type.name());
+
         insertBlockStmt.setString(9, serializeActionState(action.oldState, action.oldStateText));
         insertBlockStmt.setString(10, serializeActionState(action.newState, action.newStateText));
 
         insertBlockStmt.executeUpdate();
     }
-
 
     public static final class DbBlockAction {
         public final long timeEpoch;
@@ -186,11 +195,7 @@ public final class DatabaseManager {
         public final String oldBlock;
         public final String newBlock;
 
-        public DbBlockAction(long timeEpoch,
-                             String playerName,
-                             String actionType,
-                             String oldBlock,
-                             String newBlock) {
+        public DbBlockAction(long timeEpoch, String playerName, String actionType, String oldBlock, String newBlock) {
             this.timeEpoch = timeEpoch;
             this.playerName = playerName;
             this.actionType = actionType;
@@ -207,8 +212,7 @@ public final class DatabaseManager {
                                  ResourceKey<Level> dimension,
                                  int x,
                                  int y,
-                                 int z) {
-    }
+                                 int z) {}
 
     public synchronized List<DbBlockAction> getBlockHistory(ResourceKey<Level> dimension,
                                                             BlockPos pos,
@@ -310,9 +314,7 @@ public final class DatabaseManager {
                     long dz = z - center.getZ();
 
                     long distSq = dx * dx + dy * dy + dz * dz;
-                    if (distSq > radiusSq) {
-                        continue;
-                    }
+                    if (distSq > radiusSq) continue;
 
                     long timeEpoch = rs.getLong("time_epoch");
                     String dbPlayerName = rs.getString("player_name");
@@ -320,17 +322,7 @@ public final class DatabaseManager {
                     String oldBlock = rs.getString("old_block");
                     String newBlock = rs.getString("new_block");
 
-                    result.add(new DbLookupResult(
-                            timeEpoch,
-                            dbPlayerName,
-                            actionType,
-                            oldBlock,
-                            newBlock,
-                            dimension,
-                            x,
-                            y,
-                            z
-                    ));
+                    result.add(new DbLookupResult(timeEpoch, dbPlayerName, actionType, oldBlock, newBlock, dimension, x, y, z));
                 }
             }
         } catch (SQLException e) {
@@ -342,9 +334,7 @@ public final class DatabaseManager {
 
     private void close() throws SQLException {
         try {
-            if (insertBlockStmt != null) {
-                insertBlockStmt.close();
-            }
+            if (insertBlockStmt != null) insertBlockStmt.close();
         } finally {
             if (connection != null && !connection.isClosed()) {
                 connection.commit();
@@ -373,14 +363,15 @@ public final class DatabaseManager {
                 """);
 
             st.execute("""
-                CREATE INDEX IF NOT EXISTS idx_block_actions_pos 
+                CREATE INDEX IF NOT EXISTS idx_block_actions_pos
                 ON block_actions (dimension, x, y, z);
                 """);
 
             st.execute("""
-                CREATE INDEX IF NOT EXISTS idx_block_actions_player_time 
+                CREATE INDEX IF NOT EXISTS idx_block_actions_player_time
                 ON block_actions (player_uuid, time_epoch);
                 """);
+
             st.execute("""
                 CREATE TABLE IF NOT EXISTS rollback_sessions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -417,17 +408,12 @@ public final class DatabaseManager {
             """);
     }
 
-    /**
-     * Логирование одного действия блока.
-     * Сейчас синхронно, позже можно завернуть в очередь/отдельный поток.
-     */
     public void logBlockAction(BlockAction action) {
         if (connection == null) return;
         if (!running) return;
 
         boolean offered = queue.offer(action);
         if (!offered) {
-            // очередь переполнена — можно либо дропнуть, либо писать синхронно
             Coreprotect.LOGGER.warn("[Coreprotect] Очередь БД переполнена, событие будет записано синхронно.");
             synchronized (this) {
                 try {
@@ -445,13 +431,12 @@ public final class DatabaseManager {
         }
     }
 
-
     public BlockState deserializeBlockState(String serialized) {
         if (serialized == null) {
             return Blocks.AIR.defaultBlockState();
         }
 
-        // Новое хранение — SNBT с использованием BlockState.CODEC
+        // Новое хранение — SNBT через BlockState.CODEC
         try {
             Tag tag = TagParser.parseTag(serialized);
             DataResult<BlockState> parsed = BlockState.CODEC.parse(NbtOps.INSTANCE, tag);
@@ -461,20 +446,16 @@ public final class DatabaseManager {
             parsed.error().ifPresent(err -> Coreprotect.LOGGER.warn(
                     "[Coreprotect] Ошибка декодирования BlockState из NBT '{}': {}",
                     serialized, err.message()));
-        } catch (CommandSyntaxException ignored) {
-            // не NBT — попробуем устаревшие форматы ниже
-        }
+        } catch (CommandSyntaxException ignored) {}
 
-        // Совместимость: строковое представление вида "minecraft:stone" или "minecraft:wool[color=red]"
+        // Совместимость: "minecraft:wool[color=red]"
         try {
             var reader = new StringReader(serialized);
             var parsed = BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK.asLookup(), reader, false);
             return parsed.blockState();
-        } catch (CommandSyntaxException e) {
-            // игнорируем, перейдем к legacy
-        }
+        } catch (CommandSyntaxException ignored) {}
 
-        // Legacy: только registry name без пропертей
+        // Legacy: "minecraft:stone"
         try {
             ResourceLocation rl = new ResourceLocation(serialized);
             Block block = BuiltInRegistries.BLOCK.get(rl);
@@ -490,7 +471,7 @@ public final class DatabaseManager {
 
     private String serializeActionState(BlockState state, String explicit) {
         if (explicit != null) {
-            return explicit;
+            return explicit; // контейнеры/тексты
         }
         return serializeBlockState(state);
     }
@@ -509,10 +490,11 @@ public final class DatabaseManager {
                 "[Coreprotect] Ошибка сериализации BlockState '{}': {}",
                 state, err.message()));
 
-        // Fallback для потенциально проблемных блоков
         var key = BuiltInRegistries.BLOCK.getKey(state.getBlock());
         return key != null ? key.toString() : state.toString();
     }
+
+    // ---- остальная часть (rollback/restore/purge) у тебя уже ок ----
 
     public static final class DbRollbackAction {
         public final long timeEpoch;
@@ -520,8 +502,7 @@ public final class DatabaseManager {
         public final String actionType;
         public final String oldBlock;
 
-        public DbRollbackAction(long timeEpoch, int x, int y, int z,
-                                String actionType, String oldBlock) {
+        public DbRollbackAction(long timeEpoch, int x, int y, int z, String actionType, String oldBlock) {
             this.timeEpoch = timeEpoch;
             this.x = x;
             this.y = y;
@@ -591,8 +572,7 @@ public final class DatabaseManager {
         public final String actionType;
         public final String newBlock;
 
-        public DbForwardAction(long timeEpoch, int x, int y, int z,
-                               String actionType, String newBlock) {
+        public DbForwardAction(long timeEpoch, int x, int y, int z, String actionType, String newBlock) {
             this.timeEpoch = timeEpoch;
             this.x = x;
             this.y = y;
@@ -601,6 +581,7 @@ public final class DatabaseManager {
             this.newBlock = newBlock;
         }
     }
+
     public synchronized List<DbRollbackAction> getActionsForRollback(ResourceKey<Level> dimension,
                                                                      BlockPos center,
                                                                      int radius,
@@ -695,7 +676,6 @@ public final class DatabaseManager {
             sql.append(" AND player_name = ? ");
         }
 
-        // Для restore логичнее идти от старых к новым
         sql.append(" ORDER BY time_epoch ASC;");
 
         try (PreparedStatement ps = connection.prepareStatement(sql.toString())) {
@@ -731,21 +711,6 @@ public final class DatabaseManager {
 
         return result;
     }
-    public static final class RollbackSessionInfo {
-        public final int id;
-        public final long timeEpoch;
-        public final String executor;
-        public final String params;
-        public final boolean restored;
-
-        public RollbackSessionInfo(int id, long timeEpoch, String executor, String params, boolean restored) {
-            this.id = id;
-            this.timeEpoch = timeEpoch;
-            this.executor = executor;
-            this.params = params;
-            this.restored = restored;
-        }
-    }
 
     public static final class RollbackSessionEntry {
         public final int id;
@@ -755,9 +720,7 @@ public final class DatabaseManager {
         public final String beforeBlock;
         public final String afterBlock;
 
-        public RollbackSessionEntry(int id, int sessionId, String dimension,
-                                    int x, int y, int z,
-                                    String beforeBlock, String afterBlock) {
+        public RollbackSessionEntry(int id, int sessionId, String dimension, int x, int y, int z, String beforeBlock, String afterBlock) {
             this.id = id;
             this.sessionId = sessionId;
             this.dimension = dimension;
@@ -768,17 +731,27 @@ public final class DatabaseManager {
             this.afterBlock = afterBlock;
         }
     }
+
     public synchronized int createRollbackSession(String executor, String params) {
+        if (connection == null) return -1;
+
         String sql = """
-            INSERT INTO rollback_sessions (time_epoch, executor, params, restored)
-            VALUES (?, ?, ?, 0);
-            """;
+        INSERT INTO rollback_sessions (time_epoch, executor, params, restored)
+        VALUES (?, ?, ?, 0);
+        """;
+
         try (PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
-            long now = System.currentTimeMillis() / 1000L;
-            ps.setLong(1, now);
+            long nowEpoch = System.currentTimeMillis() / 1000L;
+
+            ps.setLong(1, nowEpoch);
             ps.setString(2, executor);
             ps.setString(3, params);
-            ps.executeUpdate();
+
+            int updated = ps.executeUpdate();
+            if (updated <= 0) {
+                connection.rollback();
+                return -1;
+            }
 
             try (ResultSet rs = ps.getGeneratedKeys()) {
                 if (rs.next()) {
@@ -787,14 +760,13 @@ public final class DatabaseManager {
                     return id;
                 }
             }
+
+            connection.rollback();
         } catch (SQLException e) {
             Coreprotect.LOGGER.error("[Coreprotect] Ошибка создания rollback-сессии", e);
-            try {
-                connection.rollback();
-            } catch (SQLException ex) {
-                Coreprotect.LOGGER.error("[Coreprotect] Ошибка rollback при создании сессии", ex);
-            }
+            try { connection.rollback(); } catch (SQLException ignored) {}
         }
+
         return -1;
     }
 
@@ -837,6 +809,7 @@ public final class DatabaseManager {
             }
         }
     }
+
     public synchronized List<RollbackSessionEntry> getRollbackEntries(int sessionId) {
         List<RollbackSessionEntry> result = new ArrayList<>();
         String sql = """
@@ -886,34 +859,24 @@ public final class DatabaseManager {
     public synchronized int purgeOldData(long olderThanEpochSeconds,
                                          ResourceKey<Level> dimension,
                                          List<String> includeBlocks) {
-        if (connection == null) {
-            return 0;
-        }
+        if (connection == null) return 0;
 
         StringBuilder sql = new StringBuilder("DELETE FROM block_actions WHERE time_epoch < ?");
-        if (dimension != null) {
-            sql.append(" AND dimension = ?");
-        }
+        if (dimension != null) sql.append(" AND dimension = ?");
 
         if (includeBlocks != null && !includeBlocks.isEmpty()) {
             String placeholders = String.join(",", java.util.Collections.nCopies(includeBlocks.size(), "?"));
-            sql.append(" AND (old_block IN (" + placeholders + ") OR new_block IN (" + placeholders + "))");
+            sql.append(" AND (old_block IN (").append(placeholders).append(") OR new_block IN (").append(placeholders).append("))");
         }
 
         try (PreparedStatement ps = connection.prepareStatement(sql.toString())) {
             int idx = 1;
             ps.setLong(idx++, olderThanEpochSeconds);
-            if (dimension != null) {
-                ps.setString(idx++, dimension.location().toString());
-            }
+            if (dimension != null) ps.setString(idx++, dimension.location().toString());
 
             if (includeBlocks != null && !includeBlocks.isEmpty()) {
-                for (String block : includeBlocks) {
-                    ps.setString(idx++, block);
-                }
-                for (String block : includeBlocks) {
-                    ps.setString(idx++, block);
-                }
+                for (String block : includeBlocks) ps.setString(idx++, block);
+                for (String block : includeBlocks) ps.setString(idx++, block);
             }
 
             int deleted = ps.executeUpdate();
@@ -930,5 +893,4 @@ public final class DatabaseManager {
 
         return 0;
     }
-
 }

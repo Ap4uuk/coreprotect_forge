@@ -1,10 +1,10 @@
 package ru.ap4uuk.coreprotect.inspect;
 
 import net.minecraft.ChatFormatting;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.nbt.CompoundTag;
 
 public final class InspectTool {
     private static final String TAG_KEY = "CoreprotectInspectTool";

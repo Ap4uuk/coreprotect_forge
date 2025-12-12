@@ -8,6 +8,7 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.nbt.TagParser;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
@@ -19,9 +20,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
 public final class ContainerSnapshotUtil {
@@ -91,7 +92,8 @@ public final class ContainerSnapshotUtil {
 
             return items;
         } catch (Exception e) {
-            Coreprotect.LOGGER.warn("[Coreprotect] Не удалось десериализовать содержимое контейнера '{}': {}", serialized, e.getMessage());
+            Coreprotect.LOGGER.warn("[Coreprotect] Не удалось десериализовать содержимое контейнера '{}': {}",
+                    serialized, e.getMessage());
             return Map.of();
         }
     }
@@ -184,9 +186,10 @@ public final class ContainerSnapshotUtil {
             return Component.literal("[]").withStyle(ChatFormatting.GRAY);
         }
 
-        Component prefix = Component.literal("[").withStyle(ChatFormatting.GRAY);
-        Component suffix = Component.literal("]").withStyle(ChatFormatting.GRAY);
-        return prefix.copy().append(joinComponents(entries)).append(suffix);
+        MutableComponent out = Component.literal("[").withStyle(ChatFormatting.GRAY);
+        out.append(joinComponents(entries));
+        out.append(Component.literal("]").withStyle(ChatFormatting.GRAY));
+        return out;
     }
 
     private static Component joinComponents(List<Component> components) {
@@ -194,34 +197,30 @@ public final class ContainerSnapshotUtil {
             return Component.empty();
         }
 
-        Collector<Component, ?, Component> collector = Collector.of(
-                Component::empty,
-                (acc, comp) -> {
-                    if (!acc.getString().isEmpty()) {
-                        acc.append(Component.literal("; ").withStyle(ChatFormatting.GRAY));
-                    }
-                    acc.append(comp);
-                },
-                (left, right) -> {
-                    if (!left.getString().isEmpty()) {
-                        left.append(Component.literal("; ").withStyle(ChatFormatting.GRAY));
-                    }
-                    left.append(right);
-                    return left;
-                }
-        );
+        MutableComponent out = Component.empty();
+        boolean first = true;
 
-        return components.stream().collect(collector);
+        for (Component c : components) {
+            if (!first) {
+                out.append(Component.literal("; ").withStyle(ChatFormatting.GRAY));
+            }
+            out.append(c);
+            first = false;
+        }
+
+        return out;
     }
 
     private static Component formatEntry(ItemKey key, int count) {
-        Component countComponent = Component.literal(count + "x ").withStyle(ChatFormatting.AQUA);
-        Component itemComponent = Component.literal(key.displayName()).withStyle(ChatFormatting.WHITE);
+        MutableComponent out = Component.literal(count + "x ").withStyle(ChatFormatting.AQUA);
+        MutableComponent itemComponent = Component.literal(key.displayName()).withStyle(ChatFormatting.WHITE);
+
         if (!key.tag().isEmpty()) {
-            itemComponent = itemComponent.copy()
-                    .append(Component.literal(" " + key.tag()).withStyle(ChatFormatting.DARK_GRAY));
+            itemComponent.append(Component.literal(" " + key.tag()).withStyle(ChatFormatting.DARK_GRAY));
         }
-        return countComponent.append(itemComponent);
+
+        out.append(itemComponent);
+        return out;
     }
 
     private static String formatEntry(int slot, ItemStack stack) {
@@ -260,7 +259,8 @@ public final class ContainerSnapshotUtil {
         return true;
     }
 
-    public record ContainerChange(Component removed, Component added) {}
+    public record ContainerChange(Component removed, Component added) {
+    }
 
     private record ItemKey(ResourceLocation itemId, CompoundTag tag) implements Comparable<ItemKey> {
         private static ItemKey from(ItemStack stack) {
@@ -270,6 +270,7 @@ public final class ContainerSnapshotUtil {
         }
 
         private String displayName() {
+            // Можно заменить на локализованное имя, если нужно
             return itemId().toString();
         }
 
@@ -283,4 +284,3 @@ public final class ContainerSnapshotUtil {
         }
     }
 }
-
