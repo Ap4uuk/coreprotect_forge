@@ -87,10 +87,19 @@ public class ModEvents {
             return;
         }
 
+        boolean sqlStorageEnabled = Boolean.TRUE.equals(CoreprotectConfig.COMMON.enableSqlStorage.get());
         String storageTypeRaw = CoreprotectConfig.COMMON.storageType.get();
         String storageType = storageTypeRaw == null ? "SQLITE" : storageTypeRaw.toUpperCase(Locale.ROOT);
 
-        if ("SQLITE".equals(storageType)) {
+        if (!sqlStorageEnabled) {
+            if (!"SQLITE".equals(storageType)) {
+                LOGGER.warn("[Coreprotect] storageType установлен в '{}', но enableSqlStorage=false. Используется SQLITE.", storageTypeRaw);
+            }
+            String pathStr = CoreprotectConfig.COMMON.sqlitePath.get();
+            Path dbPath = Paths.get(pathStr);
+            DatabaseManager.initSQLite(dbPath);
+            LOGGER.info("[Coreprotect] База данных (SQLite) инициализирована: {}", dbPath.toAbsolutePath());
+        } else if ("SQLITE".equals(storageType)) {
             String pathStr = CoreprotectConfig.COMMON.sqlitePath.get();
             Path dbPath = Paths.get(pathStr);
             DatabaseManager.initSQLite(dbPath);

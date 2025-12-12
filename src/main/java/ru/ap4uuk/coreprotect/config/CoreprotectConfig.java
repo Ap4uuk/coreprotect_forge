@@ -16,6 +16,7 @@ public final class CoreprotectConfig {
 
     public static class Common {
         // Тип хранилища: SQLITE, MARIADB или POSTGRESQL
+        public final ForgeConfigSpec.ConfigValue<Boolean> enableSqlStorage;
         public final ForgeConfigSpec.ConfigValue<String> storageType;
 
         // Путь к SQLite-файлу
@@ -32,8 +33,12 @@ public final class CoreprotectConfig {
         public Common(ForgeConfigSpec.Builder builder) {
             builder.push("storage");
 
+            enableSqlStorage = builder
+                    .comment("Включить работу с MariaDB/PostgreSQL (по умолчанию используется SQLite)")
+                    .define("enableSqlStorage", false);
+
             storageType = builder
-                    .comment("Тип хранилища: SQLITE, MARIADB или POSTGRESQL")
+                    .comment("Тип хранилища: SQLITE, MARIADB или POSTGRESQL. Используется если enableSqlStorage=true")
                     .define("storageType", "SQLITE");
 
             sqlitePath = builder
