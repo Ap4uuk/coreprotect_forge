@@ -1,15 +1,22 @@
 package ru.ap4uuk.coreprotect.storage;
 
+import com.mojang.brigadier.StringReader;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.serialization.DataResult;
+import net.minecraft.commands.arguments.blocks.BlockStateParser;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
+import net.minecraft.nbt.TagParser;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import ru.ap4uuk.coreprotect.Coreprotect;
 import ru.ap4uuk.coreprotect.model.BlockAction;
-import net.minecraft.core.BlockPos;
-import net.minecraft.resources.ResourceKey;
-import net.minecraft.world.level.Level;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -340,40 +347,72 @@ public final class DatabaseManager {
     }
 
 
-    public BlockState deserializeBlockState(String id) {
-        if (id == null) {
+    public BlockState deserializeBlockState(String serialized) {
+        if (serialized == null) {
             return Blocks.AIR.defaultBlockState();
         }
+
+        // Новое хранение — SNBT с использованием BlockState.CODEC
         try {
-            ResourceLocation rl = new ResourceLocation(id);
-            Block block = BuiltInRegistries.BLOCK.get(rl);
-            if (block == null) {
-                return Blocks.AIR.defaultBlockState();
+            Tag tag = TagParser.parseTag(serialized);
+            DataResult<BlockState> parsed = BlockState.CODEC.parse(NbtOps.INSTANCE, tag);
+            if (parsed.result().isPresent()) {
+                return parsed.result().get();
             }
-            return block.defaultBlockState(); // пока без пропертей
-        } catch (Exception e) {
-            Coreprotect.LOGGER.warn("[Coreprotect] Не удалось десериализовать BlockState из '{}'", id, e);
-            return Blocks.AIR.defaultBlockState();
+            parsed.error().ifPresent(err -> Coreprotect.LOGGER.warn(
+                    "[Coreprotect] Ошибка декодирования BlockState из NBT '{}': {}",
+                    serialized, err.message()));
+        } catch (CommandSyntaxException ignored) {
+            // не NBT — попробуем устаревшие форматы ниже
         }
+
+        // Совместимость: строковое представление вида "minecraft:stone" или "minecraft:wool[color=red]"
+        try {
+            var reader = new StringReader(serialized);
+            var parsed = BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK.asLookup(), reader, false);
+            return parsed.blockState();
+        } catch (CommandSyntaxException e) {
+            // игнорируем, перейдем к legacy
+        }
+
+        // Legacy: только registry name без пропертей
+        try {
+            ResourceLocation rl = new ResourceLocation(serialized);
+            Block block = BuiltInRegistries.BLOCK.get(rl);
+            if (block != null) {
+                return block.defaultBlockState();
+            }
+        } catch (Exception e) {
+            Coreprotect.LOGGER.warn("[Coreprotect] Не удалось десериализовать BlockState из '{}'", serialized, e);
+        }
+
+        return Blocks.AIR.defaultBlockState();
     }
 
     private String serializeActionState(BlockState state, String explicit) {
         if (explicit != null) {
             return explicit;
         }
-        if (state == null) {
-            return null;
-        }
-        var key = BuiltInRegistries.BLOCK.getKey(state.getBlock());
-        if (key == null) {
-            return state.toString();
-        }
-        // Пока только registry name, позже можно добавить свойства (meta/NBT)
-        return key.toString();
+        return serializeBlockState(state);
     }
 
     private String serializeBlockState(BlockState state) {
-        return serializeActionState(state, null);
+        if (state == null) {
+            return null;
+        }
+
+        DataResult<Tag> encoded = BlockState.CODEC.encodeStart(NbtOps.INSTANCE, state);
+        if (encoded.result().isPresent()) {
+            return encoded.result().get().toString();
+        }
+
+        encoded.error().ifPresent(err -> Coreprotect.LOGGER.warn(
+                "[Coreprotect] Ошибка сериализации BlockState '{}': {}",
+                state, err.message()));
+
+        // Fallback для потенциально проблемных блоков
+        var key = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        return key != null ? key.toString() : state.toString();
     }
 
     public static final class DbRollbackAction {
