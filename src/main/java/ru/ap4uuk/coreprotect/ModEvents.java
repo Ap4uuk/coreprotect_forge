@@ -45,6 +45,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import static ru.ap4uuk.coreprotect.Coreprotect.LOGGER;
@@ -55,23 +56,13 @@ public class ModEvents {
 
     private static final Map<ContainerKey, ContainerSnapshot> CONTAINER_SNAPSHOTS = new ConcurrentHashMap<>();
     private static final Map<PistonKey, List<PistonMove>> PISTON_MOVES = new ConcurrentHashMap<>();
+    private static final AtomicBoolean SERVER_INITIALIZED = new AtomicBoolean(false);
 
     // ---------- Жизненный цикл сервера ----------
 
     @SubscribeEvent
     public static void onServerStarting(ServerStartingEvent event) {
-        String storageType = CoreprotectConfig.COMMON.storageType.get().toUpperCase(Locale.ROOT);
-
-        if ("SQLITE".equals(storageType)) {
-            String pathStr = CoreprotectConfig.COMMON.sqlitePath.get();
-            Path dbPath = Paths.get(pathStr);
-            DatabaseManager.initSQLite(dbPath);
-            LOGGER.info("[Coreprotect] База данных (SQLite) инициализирована: {}", dbPath.toAbsolutePath());
-        } else {
-            LOGGER.error("[Coreprotect] Тип хранилища '{}' не поддерживается. Используйте SQLITE.", storageType);
-        }
-
-        WorldEditIntegration.tryRegister();
+        initializeServer();
     }
 
     @SubscribeEvent
@@ -79,6 +70,28 @@ public class ModEvents {
         InspectManager.clear();
         DatabaseManager.shutdown();
         LOGGER.info("[Coreprotect] База данных остановлена.");
+        SERVER_INITIALIZED.set(false);
+    }
+
+    private static void initializeServer() {
+        if (!SERVER_INITIALIZED.compareAndSet(false, true)) {
+            LOGGER.info("[Coreprotect] Инициализация уже выполнена, пропускаем повторный вызов onServerStarting.");
+            return;
+        }
+
+        String storageTypeRaw = CoreprotectConfig.COMMON.storageType.get();
+        String storageType = storageTypeRaw == null ? "SQLITE" : storageTypeRaw.toUpperCase(Locale.ROOT);
+
+        if ("SQLITE".equals(storageType)) {
+            String pathStr = CoreprotectConfig.COMMON.sqlitePath.get();
+            Path dbPath = Paths.get(pathStr);
+            DatabaseManager.initSQLite(dbPath);
+            LOGGER.info("[Coreprotect] База данных (SQLite) инициализирована: {}", dbPath.toAbsolutePath());
+        } else {
+            LOGGER.error("[Coreprotect] Тип хранилища '{}' не поддерживается. Используйте SQLITE.", storageTypeRaw);
+        }
+
+        WorldEditIntegration.tryRegister();
     }
 
     // ---------- События блоков ----------
