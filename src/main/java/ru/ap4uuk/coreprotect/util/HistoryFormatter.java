@@ -6,15 +6,11 @@ import net.minecraft.network.chat.MutableComponent;
 import ru.ap4uuk.coreprotect.model.BlockAction;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager;
 
+import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 public final class HistoryFormatter {
-
-    private static final DateTimeFormatter TIME_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-                    .withZone(ZoneId.systemDefault());
 
     private HistoryFormatter() {}
 
@@ -23,31 +19,31 @@ public final class HistoryFormatter {
                                               String actionType,
                                               String oldBlock,
                                               String newBlock) {
-        String ts = TIME_FORMATTER.format(Instant.ofEpochSecond(epochSeconds));
+        boolean isContainer = BlockAction.Type.CONTAINER.name().equalsIgnoreCase(actionType);
+        ContainerSnapshotUtil.ContainerChange containerChange = isContainer
+                ? ContainerSnapshotUtil.describeChange(oldBlock, newBlock)
+                : null;
 
-        Component time = Component.literal(ts).withStyle(ChatFormatting.GRAY);
+        Component time = formatRelativeTime(epochSeconds);
         Component player = Component.literal(playerName == null ? "?" : playerName).withStyle(ChatFormatting.AQUA);
         Component action = TextUtil.actionName(actionType);
 
-        boolean isContainer = BlockAction.Type.CONTAINER.name().equalsIgnoreCase(actionType);
+        MutableComponent line = TextUtil.prefixed(Component.empty());
 
-        // Для CONTAINER считаем дифф один раз
-        ContainerSnapshotUtil.ContainerChange change = null;
-        if (isContainer) {
-            change = ContainerSnapshotUtil.describeChange(oldBlock, newBlock);
+        line.append(time);
+        line.append(Component.literal(" ").withStyle(ChatFormatting.GRAY));
+        line.append(changePrefix(actionType, oldBlock, newBlock, containerChange));
+        line.append(player);
+        line.append(Component.literal(" ").withStyle(ChatFormatting.GRAY));
+        line.append(action);
+
+        Component changeDescription = describeChange(actionType, oldBlock, newBlock, containerChange);
+        if (!changeDescription.getString().isBlank()) {
+            line.append(Component.literal(" ").withStyle(ChatFormatting.GRAY));
+            line.append(changeDescription);
         }
 
-        Component oldBlockComponent = describeState(actionType, oldBlock, change, true);
-        Component newBlockComponent = describeState(actionType, newBlock, change, false);
-
-        return TextUtil.prefixed(Component.translatable(
-                "message.coreprotect.inspect.line",
-                time,
-                player,
-                action,
-                oldBlockComponent,
-                newBlockComponent
-        ));
+        return line;
     }
 
     public static Component formatHistoryLine(DatabaseManager.DbBlockAction history) {
@@ -60,31 +56,148 @@ public final class HistoryFormatter {
         );
     }
 
-    private static Component describeState(String actionType,
-                                           String serialized,
-                                           ContainerSnapshotUtil.ContainerChange containerChange,
-                                           boolean isOldState) {
+    private static Component formatRelativeTime(long epochSeconds) {
+        long secondsAgo = Math.max(0, Instant.now().getEpochSecond() - epochSeconds);
+        Duration duration = Duration.ofSeconds(secondsAgo);
+
+        long days = duration.toDays();
+        duration = duration.minusDays(days);
+        long hours = duration.toHours();
+        duration = duration.minusHours(hours);
+        long minutes = duration.toMinutes();
+        duration = duration.minusMinutes(minutes);
+        long seconds = duration.getSeconds();
+
+        String[] units = isRussian() ? new String[]{"д", "ч", "м", "с"} : new String[]{"d", "h", "m", "s"};
+        StringBuilder sb = new StringBuilder();
+        int parts = 0;
+
+        parts = appendUnit(sb, days, units[0], parts);
+        parts = appendUnit(sb, hours, units[1], parts);
+        parts = appendUnit(sb, minutes, units[2], parts);
+
+        if (sb.length() == 0) {
+            appendUnit(sb, seconds, units[3], parts);
+        } else if (parts == 1 && seconds > 0) {
+            appendUnit(sb, seconds, units[3], parts);
+        }
+
+        if (sb.length() == 0) {
+            sb.append("0").append(units[3]);
+        }
+
+        sb.append(isRussian() ? " назад" : " ago");
+        return Component.literal(sb.toString()).withStyle(ChatFormatting.DARK_PURPLE);
+    }
+
+    private static int appendUnit(StringBuilder sb, long value, String unit, int parts) {
+        if (value <= 0 || parts >= 2) {
+            return parts;
+        }
+
+        if (sb.length() > 0) sb.append(' ');
+        sb.append(value).append(unit);
+        return parts + 1;
+    }
+
+    private static boolean isRussian() {
+        return Locale.getDefault().getLanguage().equalsIgnoreCase("ru");
+    }
+
+    private static Component changePrefix(String actionType,
+                                          String oldBlock,
+                                          String newBlock,
+                                          ContainerSnapshotUtil.ContainerChange containerChange) {
+        boolean addition = hasAddition(actionType, newBlock, containerChange);
+        boolean removal = hasRemoval(actionType, oldBlock, containerChange);
+
+        if (addition && !removal) {
+            return Component.literal("+ ").withStyle(ChatFormatting.GREEN);
+        }
+        if (removal && !addition) {
+            return Component.literal("- ").withStyle(ChatFormatting.RED);
+        }
+
+        return Component.literal("• ").withStyle(ChatFormatting.YELLOW);
+    }
+
+    private static Component describeChange(String actionType,
+                                            String oldBlock,
+                                            String newBlock,
+                                            ContainerSnapshotUtil.ContainerChange containerChange) {
         boolean isContainer = BlockAction.Type.CONTAINER.name().equalsIgnoreCase(actionType);
 
         if (isContainer && containerChange != null) {
-            // old = removed, new = added
-            if (isOldState) {
-                MutableComponent out = Component.literal("- ").withStyle(ChatFormatting.RED);
-                out.append(containerChange.removed());
-                return out;
-            } else {
-                MutableComponent out = Component.literal("+ ").withStyle(ChatFormatting.GREEN);
-                out.append(containerChange.added());
-                return out;
+            boolean hasRemoved = hasMeaningfulChange(containerChange.removed());
+            boolean hasAdded = hasMeaningfulChange(containerChange.added());
+
+            MutableComponent out = Component.empty();
+            if (hasRemoved) {
+                out.append(Component.literal("- ").withStyle(ChatFormatting.RED));
+                out.append(containerChange.removed().copy());
             }
+
+            if (hasAdded) {
+                if (hasRemoved) {
+                    out.append(Component.literal(" ").withStyle(ChatFormatting.GRAY));
+                }
+                out.append(Component.literal("+ ").withStyle(ChatFormatting.GREEN));
+                out.append(containerChange.added().copy());
+            }
+
+            return out;
         }
 
-        // обычные блоки
-        ChatFormatting color = isOldState ? ChatFormatting.RED : ChatFormatting.GREEN;
-        String prefix = isOldState ? "- " : "+ ";
+        boolean hasOld = !isAir(oldBlock);
+        boolean hasNew = !isAir(newBlock);
 
-        return Component.literal(prefix)
-                .withStyle(color)
-                .append(TextUtil.blockName(serialized).copy());
+        if (hasOld && hasNew && !oldBlock.equals(newBlock)) {
+            MutableComponent out = Component.empty();
+            out.append(TextUtil.blockName(oldBlock).copy().withStyle(ChatFormatting.RED));
+            out.append(Component.literal(" -> ").withStyle(ChatFormatting.DARK_GRAY));
+            out.append(TextUtil.blockName(newBlock).copy().withStyle(ChatFormatting.GREEN));
+            return out;
+        }
+
+        if (hasNew) {
+            return TextUtil.blockName(newBlock).copy();
+        }
+
+        if (hasOld) {
+            return TextUtil.blockName(oldBlock).copy();
+        }
+
+        return Component.empty();
+    }
+
+    private static boolean hasMeaningfulChange(Component component) {
+        if (component == null) return false;
+
+        String text = component.getString().trim();
+        return !text.isEmpty() && !"[]".equals(text);
+    }
+
+    private static boolean hasAddition(String actionType,
+                                       String newBlock,
+                                       ContainerSnapshotUtil.ContainerChange containerChange) {
+        if (BlockAction.Type.CONTAINER.name().equalsIgnoreCase(actionType)) {
+            return containerChange != null && hasMeaningfulChange(containerChange.added());
+        }
+
+        return !isAir(newBlock);
+    }
+
+    private static boolean hasRemoval(String actionType,
+                                      String oldBlock,
+                                      ContainerSnapshotUtil.ContainerChange containerChange) {
+        if (BlockAction.Type.CONTAINER.name().equalsIgnoreCase(actionType)) {
+            return containerChange != null && hasMeaningfulChange(containerChange.removed());
+        }
+
+        return !isAir(oldBlock);
+    }
+
+    private static boolean isAir(String serialized) {
+        return TextUtil.resolveBlockState(serialized).isAir();
     }
 }

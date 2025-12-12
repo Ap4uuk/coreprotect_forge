@@ -73,7 +73,7 @@ public final class TextUtil {
         return property.getName() + "=" + valueName;
     }
 
-    private static BlockState resolveBlockState(String serialized) {
+    public static BlockState resolveBlockState(String serialized) {
         if (serialized == null || serialized.isEmpty()) {
             return Blocks.AIR.defaultBlockState();
         }
