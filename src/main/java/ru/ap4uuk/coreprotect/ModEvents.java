@@ -4,7 +4,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -275,9 +275,9 @@ public class ModEvents {
 
     @SubscribeEvent
     public static void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
-        if (event.getLevel().isClientSide()) return;
-        if (!(event.getEntity() instanceof ServerPlayer player)) return;
-        if (event.getHand() != InteractionHand.MAIN_HAND) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
 
         ItemStack held = player.getItemInHand(event.getHand());
         if (!InspectTool.isInspectTool(held)) {
@@ -287,6 +287,10 @@ public class ModEvents {
         // не даём ломать блок инспект-блоком
         event.setCanceled(true);
 
+        if (event.getLevel().isClientSide()) {
+            return;
+        }
+
         Level level = (Level) event.getLevel();
         BlockPos pos = event.getPos();
 
@@ -295,15 +299,20 @@ public class ModEvents {
 
     @SubscribeEvent
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
-        if (event.getLevel().isClientSide()) return;
-        if (!(event.getEntity() instanceof ServerPlayer player)) return;
-        if (event.getHand() != InteractionHand.MAIN_HAND) return;
+        if (!(event.getEntity() instanceof ServerPlayer player)) {
+            return;
+        }
 
         ItemStack held = player.getItemInHand(event.getHand());
 
         // Если в руке инспект-блок — работаем через него
         if (InspectTool.isInspectTool(held)) {
             event.setCanceled(true);
+
+            if (event.getLevel().isClientSide()) {
+                event.setCancellationResult(InteractionResult.SUCCESS);
+                return;
+            }
 
             Level level = (Level) event.getLevel();
 
@@ -315,6 +324,7 @@ public class ModEvents {
             BlockPos targetPos = base;
 
             inspectPos(player, level, targetPos);
+            player.getInventory().setChanged();
             return;
         }
 
