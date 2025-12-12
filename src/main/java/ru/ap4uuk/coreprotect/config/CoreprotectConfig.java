@@ -21,6 +21,17 @@ public final class CoreprotectConfig {
         // Путь к SQLite-файлу
         public final ForgeConfigSpec.ConfigValue<String> sqlitePath;
 
+        // Общие настройки подключения к внешним БД
+        public final ForgeConfigSpec.ConfigValue<String> connectionUrl;
+        public final ForgeConfigSpec.ConfigValue<String> host;
+        public final ForgeConfigSpec.IntValue port;
+        public final ForgeConfigSpec.ConfigValue<String> databaseName;
+        public final ForgeConfigSpec.ConfigValue<String> username;
+        public final ForgeConfigSpec.ConfigValue<String> password;
+        public final ForgeConfigSpec.BooleanValue useSsl;
+        public final ForgeConfigSpec.BooleanValue verifyServerCertificate;
+        public final ForgeConfigSpec.IntValue connectionPoolSize;
+
         // Сколько записей показывать при инспекции блока
         public final ForgeConfigSpec.IntValue inspectHistoryLimit;
 
@@ -28,12 +39,48 @@ public final class CoreprotectConfig {
             builder.push("storage");
 
             storageType = builder
-                    .comment("Тип хранилища: SQLITE (другие типы пока не реализованы)")
+                    .comment("Тип хранилища: SQLITE, MARIADB, POSTGRESQL")
                     .define("storageType", "SQLITE");
 
             sqlitePath = builder
                     .comment("Путь к SQLite файлу относительно корня сервера")
                     .define("sqlitePath", "coreprotect/coreprotect.sqlite");
+
+            connectionUrl = builder
+                    .comment("Полный JDBC URL. Если указан, host/port/databaseName игнорируются")
+                    .define("connectionUrl", "");
+
+            host = builder
+                    .comment("Хост базы данных для MARIADB/POSTGRESQL")
+                    .define("host", "localhost");
+
+            port = builder
+                    .comment("Порт базы данных")
+                    .defineInRange("port", 0, 0, 65535);
+
+            databaseName = builder
+                    .comment("Имя базы данных")
+                    .define("databaseName", "coreprotect");
+
+            username = builder
+                    .comment("Пользователь базы данных")
+                    .define("username", "");
+
+            password = builder
+                    .comment("Пароль базы данных")
+                    .define("password", "");
+
+            useSsl = builder
+                    .comment("Включить SSL при подключении к внешним БД")
+                    .define("useSsl", false);
+
+            verifyServerCertificate = builder
+                    .comment("Проверять сертификат сервера при SSL (MARIADB)")
+                    .define("verifyServerCertificate", true);
+
+            connectionPoolSize = builder
+                    .comment("Размер пула подключений для внешних БД")
+                    .defineInRange("connectionPoolSize", 4, 1, 64);
 
             builder.pop();
 

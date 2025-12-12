@@ -61,6 +61,8 @@ public class ModEvents {
 
     private static final Map<PistonKey, List<PistonMove>> PISTON_MOVES = new ConcurrentHashMap<>();
     private static final AtomicBoolean SERVER_INITIALIZED = new AtomicBoolean(false);
+    private static final int DEFAULT_MARIADB_PORT = 3306;
+    private static final int DEFAULT_POSTGRES_PORT = 5432;
 
     // ---------- Жизненный цикл сервера ----------
 
@@ -88,16 +90,110 @@ public class ModEvents {
         String storageTypeRaw = CoreprotectConfig.COMMON.storageType.get();
         String storageType = storageTypeRaw == null ? "SQLITE" : storageTypeRaw.toUpperCase(Locale.ROOT);
 
-        if ("SQLITE".equals(storageType)) {
-            String pathStr = CoreprotectConfig.COMMON.sqlitePath.get();
-            Path dbPath = Paths.get(pathStr);
-            DatabaseManager.initSQLite(dbPath);
-            LOGGER.info("[Coreprotect] База данных (SQLite) инициализирована: {}", dbPath.toAbsolutePath());
-        } else {
-            LOGGER.error("[Coreprotect] Тип хранилища '{}' не поддерживается. Используйте SQLITE.", storageTypeRaw);
+        switch (storageType) {
+            case "SQLITE" -> {
+                String pathStr = CoreprotectConfig.COMMON.sqlitePath.get();
+                Path dbPath = Paths.get(pathStr);
+                DatabaseManager.initSQLite(dbPath);
+                LOGGER.info("[Coreprotect] База данных (SQLite) инициализирована: {}", dbPath.toAbsolutePath());
+            }
+            case "MARIADB" -> initSqlFromConfig(storageType, DEFAULT_MARIADB_PORT);
+            case "POSTGRESQL" -> initSqlFromConfig(storageType, DEFAULT_POSTGRES_PORT);
+            default -> LOGGER.error("[Coreprotect] Тип хранилища '{}' не поддерживается. Используйте SQLITE, MARIADB или POSTGRESQL.", storageTypeRaw);
         }
 
         WorldEditIntegration.tryRegister();
+    }
+
+    private static void initSqlFromConfig(String storageType, int defaultPort) {
+        String overrideUrl = CoreprotectConfig.COMMON.connectionUrl.get();
+        String host = CoreprotectConfig.COMMON.host.get();
+        int port = CoreprotectConfig.COMMON.port.get();
+        String databaseName = CoreprotectConfig.COMMON.databaseName.get();
+        String username = CoreprotectConfig.COMMON.username.get();
+        String password = CoreprotectConfig.COMMON.password.get();
+        boolean useSsl = CoreprotectConfig.COMMON.useSsl.get();
+        boolean verifyCert = CoreprotectConfig.COMMON.verifyServerCertificate.get();
+        int poolSize = CoreprotectConfig.COMMON.connectionPoolSize.get();
+
+        List<String> drivers;
+        String jdbcUrl;
+
+        if ("MARIADB".equals(storageType)) {
+            drivers = List.of("org.mariadb.jdbc.Driver", "com.mysql.cj.jdbc.Driver");
+            jdbcUrl = buildMariaDbUrl(overrideUrl, host, port, defaultPort, databaseName, useSsl, verifyCert);
+        } else if ("POSTGRESQL".equals(storageType)) {
+            drivers = List.of("org.postgresql.Driver");
+            jdbcUrl = buildPostgresUrl(overrideUrl, host, port, defaultPort, databaseName, useSsl, verifyCert);
+        } else {
+            LOGGER.error("[Coreprotect] Неизвестный тип внешней БД: {}", storageType);
+            return;
+        }
+
+        DatabaseManager.initSql(drivers, jdbcUrl, username, password, poolSize);
+        if (DatabaseManager.get() != null) {
+            LOGGER.info("[Coreprotect] База данных ({}) инициализирована: {}", storageType, jdbcUrl);
+        }
+    }
+
+    private static String buildMariaDbUrl(String overrideUrl,
+                                          String host,
+                                          int port,
+                                          int defaultPort,
+                                          String database,
+                                          boolean useSsl,
+                                          boolean verifyCert) {
+        if (hasText(overrideUrl)) return overrideUrl.trim();
+
+        int resolvedPort = port > 0 ? port : defaultPort;
+        String safeHost = hasText(host) ? host.trim() : "localhost";
+        String safeDb = hasText(database) ? database.trim() : "coreprotect";
+
+        StringBuilder url = new StringBuilder("jdbc:mariadb://")
+                .append(safeHost)
+                .append(":")
+                .append(resolvedPort)
+                .append("/")
+                .append(safeDb);
+
+        List<String> params = List.of(
+                "useSSL=" + useSsl,
+                "verifyServerCertificate=" + verifyCert
+        );
+
+        url.append("?").append(String.join("&", params));
+        return url.toString();
+    }
+
+    private static String buildPostgresUrl(String overrideUrl,
+                                           String host,
+                                           int port,
+                                           int defaultPort,
+                                           String database,
+                                           boolean useSsl,
+                                           boolean verifyCert) {
+        if (hasText(overrideUrl)) return overrideUrl.trim();
+
+        int resolvedPort = port > 0 ? port : defaultPort;
+        String safeHost = hasText(host) ? host.trim() : "localhost";
+        String safeDb = hasText(database) ? database.trim() : "coreprotect";
+
+        StringBuilder url = new StringBuilder("jdbc:postgresql://")
+                .append(safeHost)
+                .append(":")
+                .append(resolvedPort)
+                .append("/")
+                .append(safeDb);
+
+        if (useSsl) {
+            url.append("?sslmode=").append(verifyCert ? "verify-full" : "require");
+        }
+
+        return url.toString();
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     // ---------- События блоков ----------

@@ -51,26 +51,6 @@ public final class DatabaseManager {
         }
 
         try {
-            // 1) пробуем shaded-драйвер
-            boolean driverOk = false;
-            try {
-                Class.forName("ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC");
-                Coreprotect.LOGGER.info("[Coreprotect] Драйвер SQLite найден (shaded): ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC");
-                driverOk = true;
-            } catch (ClassNotFoundException ignored) {}
-
-            // 2) пробуем обычный
-            if (!driverOk) {
-                try {
-                    Class.forName("org.sqlite.JDBC");
-                    Coreprotect.LOGGER.info("[Coreprotect] Драйвер SQLite найден: org.sqlite.JDBC");
-                    driverOk = true;
-                } catch (ClassNotFoundException e) {
-                    Coreprotect.LOGGER.error("[Coreprotect] Драйвер SQLite не найден в classpath! Проверь shadow/shade.", e);
-                    return;
-                }
-            }
-
             if (dbFile.getParent() != null) {
                 Files.createDirectories(dbFile.getParent());
             }
@@ -78,16 +58,70 @@ public final class DatabaseManager {
             String url = "jdbc:sqlite:" + dbFile.toAbsolutePath();
             Coreprotect.LOGGER.info("[Coreprotect] Подключаемся к SQLite по URL: {}", url);
 
-            Connection conn = DriverManager.getConnection(url);
-            if (conn == null) {
-                Coreprotect.LOGGER.error("[Coreprotect] DriverManager вернул null при подключении к SQLite.");
+            initSql(List.of(
+                    "ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC",
+                    "org.sqlite.JDBC"
+            ), url, null, null, 1);
+
+            if (INSTANCE != null) {
+                Coreprotect.LOGGER.info("[Coreprotect] SQLite инициализирован: {}", dbFile.toAbsolutePath());
+            }
+        } catch (Exception e) {
+            Coreprotect.LOGGER.error("[Coreprotect] Ошибка инициализации SQLite", e);
+            INSTANCE = null;
+        }
+    }
+
+    public static synchronized void initSql(List<String> driverClassNames,
+                                            String jdbcUrl,
+                                            String username,
+                                            String password,
+                                            int connectionPoolSize) {
+        if (INSTANCE != null) {
+            Coreprotect.LOGGER.warn("[Coreprotect] DatabaseManager уже инициализирован.");
+            return;
+        }
+
+        try {
+            boolean driverOk = false;
+            String activeDriver = null;
+
+            for (String driverClassName : driverClassNames) {
+                if (driverClassName == null || driverClassName.isBlank()) continue;
+                try {
+                    Class.forName(driverClassName.trim());
+                    driverOk = true;
+                    activeDriver = driverClassName.trim();
+                    Coreprotect.LOGGER.info("[Coreprotect] Драйвер найден: {}", activeDriver);
+                    break;
+                } catch (ClassNotFoundException e) {
+                    Coreprotect.LOGGER.debug("[Coreprotect] Драйвер {} не найден в classpath.", driverClassName);
+                }
+            }
+
+            if (!driverOk) {
+                Coreprotect.LOGGER.error("[Coreprotect] Ни один из указанных JDBC-драйверов не найден: {}", driverClassNames);
                 return;
             }
 
+            Connection conn;
+            if (username != null && !username.isBlank()) {
+                conn = DriverManager.getConnection(jdbcUrl, username, password == null ? "" : password);
+            } else {
+                conn = DriverManager.getConnection(jdbcUrl);
+            }
+
+            if (conn == null) {
+                Coreprotect.LOGGER.error("[Coreprotect] DriverManager вернул null при подключении.");
+                return;
+            }
+
+            Coreprotect.LOGGER.info("[Coreprotect] Размер пула подключений: {}", connectionPoolSize);
+
             INSTANCE = new DatabaseManager(conn);
-            Coreprotect.LOGGER.info("[Coreprotect] SQLite инициализирован: {}", dbFile.toAbsolutePath());
+            Coreprotect.LOGGER.info("[Coreprotect] SQL подключение установлено по URL: {} (driver: {})", jdbcUrl, activeDriver);
         } catch (Exception e) {
-            Coreprotect.LOGGER.error("[Coreprotect] Ошибка инициализации SQLite", e);
+            Coreprotect.LOGGER.error("[Coreprotect] Ошибка инициализации SQL подключения", e);
             INSTANCE = null;
         }
     }
