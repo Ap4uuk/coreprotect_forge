@@ -335,7 +335,7 @@ public class ModEvents {
         renderInspectHistory(player, level, session);
     }
 
-    private static void renderInspectHistory(ServerPlayer player, Level level, InspectManager.InspectSession session) {
+    static void renderInspectHistory(ServerPlayer player, Level level, InspectManager.InspectSession session) {
         var db = DatabaseManager.get();
         if (db == null) {
             player.sendSystemMessage(TextUtil.translate("message.coreprotect.db_unavailable"));
@@ -370,10 +370,14 @@ public class ModEvents {
 
         int currentPage = session.page() + 1;
         MutableComponent pageLine = TextUtil.translate(
-                "message.coreprotect.inspect.page_total",
-                Component.literal(String.valueOf(currentPage)).withStyle(ChatFormatting.GOLD),
-                Component.literal(String.valueOf(totalPages)).withStyle(ChatFormatting.GOLD)
+                "message.coreprotect.inspect.page",
+                Component.literal(String.valueOf(currentPage)).withStyle(ChatFormatting.GOLD)
         );
+
+// добавляем "/%s" (это не “вшивание фразы”, слово "Страница" берётся из lang по ключу page)
+        pageLine.append(Component.literal("/").withStyle(ChatFormatting.GRAY));
+        pageLine.append(Component.literal(String.valueOf(totalPages)).withStyle(ChatFormatting.GOLD));
+
         pageLine.append(PaginationUtil.buildPager(p -> "/co ipage " + p, currentPage, totalPages));
         player.sendSystemMessage(pageLine);
 

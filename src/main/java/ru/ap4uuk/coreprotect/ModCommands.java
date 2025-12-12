@@ -44,6 +44,7 @@ import java.util.List;
 
 
 import static ru.ap4uuk.coreprotect.Coreprotect.MODID;
+import static ru.ap4uuk.coreprotect.ModEvents.renderInspectHistory;
 
 @Mod.EventBusSubscriber(modid = MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class ModCommands {
