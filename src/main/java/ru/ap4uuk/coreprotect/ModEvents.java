@@ -33,14 +33,13 @@ import ru.ap4uuk.coreprotect.storage.DatabaseManager;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbBlockAction;
 import ru.ap4uuk.coreprotect.util.ActionContext;
 import ru.ap4uuk.coreprotect.util.BlockLogging;
+import ru.ap4uuk.coreprotect.util.HistoryFormatter;
 import ru.ap4uuk.coreprotect.util.TextUtil;
 import ru.ap4uuk.coreprotect.util.WorldEditIntegration;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,10 +52,6 @@ import static ru.ap4uuk.coreprotect.Coreprotect.MODID;
 
 @Mod.EventBusSubscriber(modid = MODID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class ModEvents {
-
-    private static final DateTimeFormatter TIME_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-                    .withZone(ZoneId.systemDefault());
 
     private static final Map<ContainerKey, ContainerSnapshot> CONTAINER_SNAPSHOTS = new ConcurrentHashMap<>();
     private static final Map<PistonKey, List<PistonMove>> PISTON_MOVES = new ConcurrentHashMap<>();
@@ -403,31 +398,12 @@ public class ModEvents {
         ));
 
         for (DbBlockAction h : history) {
-            player.sendSystemMessage(formatHistoryLine(h));
+            player.sendSystemMessage(HistoryFormatter.formatHistoryLine(h));
         }
 
         if (hasNext) {
             player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.next_hint"));
         }
-    }
-
-    private static Component formatHistoryLine(DbBlockAction history) {
-        String ts = TIME_FORMATTER.format(Instant.ofEpochSecond(history.timeEpoch));
-
-        Component time = Component.literal(ts).withStyle(ChatFormatting.GRAY);
-        Component playerName = Component.literal(history.playerName).withStyle(ChatFormatting.AQUA);
-        Component action = TextUtil.actionName(history.actionType);
-        Component oldBlock = TextUtil.blockName(history.oldBlock);
-        Component newBlock = TextUtil.blockName(history.newBlock);
-
-        return TextUtil.prefixed(Component.translatable(
-                "message.coreprotect.inspect.line",
-                time,
-                playerName,
-                action,
-                oldBlock,
-                newBlock
-        ));
     }
 
     @SubscribeEvent

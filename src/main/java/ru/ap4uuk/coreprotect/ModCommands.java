@@ -18,6 +18,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import ru.ap4uuk.coreprotect.command.CoParamParser;
 import ru.ap4uuk.coreprotect.command.CommandVariableResolver;
+import ru.ap4uuk.coreprotect.command.LookupParams;
 import ru.ap4uuk.coreprotect.command.PurgeParams;
 import ru.ap4uuk.coreprotect.command.RollbackParams;
 import ru.ap4uuk.coreprotect.inspect.InspectManager;
@@ -26,9 +27,12 @@ import ru.ap4uuk.coreprotect.permissions.EnumPermissions;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbForwardAction;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbRollbackAction;
+import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbLookupResult;
 import ru.ap4uuk.coreprotect.util.ActionContext;
+import ru.ap4uuk.coreprotect.util.HistoryFormatter;
 import ru.ap4uuk.coreprotect.util.ParameterException;
 import ru.ap4uuk.coreprotect.util.TextUtil;
+import ru.ap4uuk.coreprotect.config.CoreprotectConfig;
 
 import java.time.Instant;
 import java.util.List;
@@ -59,6 +63,7 @@ public class ModCommands {
             suggestions.add("r:10");
             suggestions.add("u:");
             suggestions.add("id:");
+            suggestions.add("p:2");
             suggestions.addAll(variableSuggestions);
         } else {
             // time
@@ -75,6 +80,11 @@ public class ModCommands {
                 suggestions.add("r:10");
                 suggestions.add("r:20");
                 suggestions.add("r:50");
+            }
+
+            if ("p:".startsWith(tokenLower) || tokenLower.startsWith("p:")) {
+                suggestions.add("p:2");
+                suggestions.add("p:3");
             }
 
             // user / игрок
@@ -109,6 +119,7 @@ public class ModCommands {
                 suggestions.add("r:10");
                 suggestions.add("u:");
                 suggestions.add("id:");
+                suggestions.add("p:2");
                 suggestions.addAll(variableSuggestions);
             }
         }
@@ -138,6 +149,22 @@ public class ModCommands {
                                             : "message.coreprotect.inspect.disabled");
                                     player.sendSystemMessage(msg);
                                     return 1;
+                                })
+                        )
+                        .then(Commands.literal("lookup")
+                                .requires(src -> EnumPermissions.LOOKUP.hasPermission(src))
+                                .then(Commands.argument("params", StringArgumentType.greedyString())
+                                        .suggests(CO_PARAM_SUGGESTIONS)
+                                        .executes(ctx -> {
+                                            ServerPlayer player = ctx.getSource().getPlayerOrException();
+                                            String paramsStr = StringArgumentType.getString(ctx, "params");
+                                            paramsStr = CommandVariableResolver.resolve(player, paramsStr);
+                                            return executeLookup(player, paramsStr);
+                                        })
+                                )
+                                .executes(ctx -> {
+                                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                                    return executeLookup(player, "");
                                 })
                         )
                         .then(Commands.literal("rollback")
@@ -216,6 +243,107 @@ public class ModCommands {
         } else {
             source.sendSuccess(() -> message, false);
         }
+    }
+
+    private static int executeLookup(ServerPlayer player, String paramsStr) {
+        DatabaseManager db = DatabaseManager.get();
+        if (db == null) {
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.db_unavailable"));
+            return 0;
+        }
+
+        LookupParams params;
+        try {
+            params = CoParamParser.parseLookup(paramsStr);
+        } catch (ParameterException e) {
+            player.sendSystemMessage(TextUtil.translate(e.getTranslationKey(), e.getArgs()));
+            return 0;
+        } catch (IllegalArgumentException e) {
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.params_error", e.getMessage()));
+            return 0;
+        }
+
+        int radius = params.radius != null ? params.radius : 10;
+        if (radius <= 0) {
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.params.radius_invalid", radius));
+            return 0;
+        }
+
+        Integer seconds = params.seconds;
+        String playerFilter = params.playerName;
+        int page = params.page != null ? params.page : 1;
+
+        Level level = player.serverLevel();
+        BlockPos center = player.blockPosition();
+
+        Long since = seconds != null ? Instant.now().getEpochSecond() - seconds : null;
+
+        int pageSize = CoreprotectConfig.COMMON.inspectHistoryLimit.get();
+        int offset = (page - 1) * pageSize;
+
+        List<DbLookupResult> history = db.getLookupHistory(
+                level.dimension(), center, radius, since, playerFilter, pageSize + 1, offset
+        );
+
+        boolean hasNext = history.size() > pageSize;
+        if (hasNext) {
+            history = history.subList(0, pageSize);
+        }
+
+        if (history.isEmpty()) {
+            if (page > 1) {
+                player.sendSystemMessage(TextUtil.translate("message.coreprotect.lookup.no_more_pages"));
+            } else {
+                player.sendSystemMessage(TextUtil.translate("message.coreprotect.lookup.empty"));
+            }
+            return 0;
+        }
+
+        Component timeFilter = seconds == null
+                ? Component.translatable("message.coreprotect.lookup.all_time").withStyle(ChatFormatting.GRAY)
+                : Component.literal(String.valueOf(seconds)).withStyle(ChatFormatting.GOLD);
+
+        Component userFilter = playerFilter == null
+                ? Component.empty()
+                : Component.translatable(
+                        "message.coreprotect.filter.user",
+                        Component.literal(playerFilter).withStyle(ChatFormatting.AQUA)
+                ).withStyle(ChatFormatting.GRAY);
+
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.lookup.header",
+                Component.literal(level.dimension().location().toString()).withStyle(ChatFormatting.AQUA),
+                Component.literal(center.getX() + "," + center.getY() + "," + center.getZ()).withStyle(ChatFormatting.WHITE)
+        ));
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.lookup.filters",
+                Component.literal(String.valueOf(radius)).withStyle(ChatFormatting.GOLD),
+                timeFilter,
+                userFilter
+        ));
+        player.sendSystemMessage(TextUtil.translate(
+                "message.coreprotect.lookup.page",
+                Component.literal(String.valueOf(page)).withStyle(ChatFormatting.GOLD)
+        ));
+
+        for (DbLookupResult h : history) {
+            player.sendSystemMessage(HistoryFormatter.formatHistoryLine(
+                    h.timeEpoch(),
+                    h.playerName(),
+                    h.actionType(),
+                    h.oldBlock(),
+                    h.newBlock()
+            ));
+        }
+
+        if (hasNext) {
+            player.sendSystemMessage(TextUtil.translate(
+                    "message.coreprotect.lookup.next_hint",
+                    Component.literal(String.valueOf(page + 1)).withStyle(ChatFormatting.GOLD)
+            ));
+        }
+
+        return history.size();
     }
 
     private static int executeRollback(ServerPlayer player, String paramsStr) {

@@ -17,6 +17,7 @@
   "message.coreprotect.params.missing": "Parameters are not specified.",
   "message.coreprotect.params.invalid_pair": "Invalid parameter: %s",
   "message.coreprotect.params.radius_invalid": "Invalid radius: %s",
+  "message.coreprotect.params.page_invalid": "Invalid page number: %s",
   "message.coreprotect.params.id_invalid": "Invalid session id: %s",
   "message.coreprotect.params.unknown_key": "Unknown parameter: %s",
   "message.coreprotect.params.time_missing": "Time parameter t:<...> is required.",
@@ -46,5 +47,12 @@
   "message.coreprotect.inspect.line": "%s | %s | %s | %s -> %s",
   "message.coreprotect.inspect.no_more_pages": "No more pages, history reset.",
   "message.coreprotect.inspect.no_records": "There are no records for this block.",
-  "message.coreprotect.inspect.next_hint": "Hold Shift and click again to view the next page."
+  "message.coreprotect.inspect.next_hint": "Hold Shift and click again to view the next page.",
+  "message.coreprotect.lookup.header": "Lookup at %s (%s)",
+  "message.coreprotect.lookup.filters": "Radius: %s, Time: %s%s",
+  "message.coreprotect.lookup.page": "Page %s",
+  "message.coreprotect.lookup.all_time": "all time",
+  "message.coreprotect.lookup.empty": "No history found for the specified filters.",
+  "message.coreprotect.lookup.no_more_pages": "There are no more lookup pages.",
+  "message.coreprotect.lookup.next_hint": "Use p:%s to request the next page."
 }
