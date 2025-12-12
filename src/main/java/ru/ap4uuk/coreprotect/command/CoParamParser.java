@@ -45,6 +45,42 @@ public final class CoParamParser {
         return params;
     }
 
+    public static LookupParams parseLookup(String input) throws ParameterException {
+        LookupParams params = new LookupParams();
+
+        if (input == null || input.isBlank()) {
+            return params;
+        }
+
+        String[] tokens = input.trim().split("\\s+");
+
+        for (String token : tokens) {
+            int idx = token.indexOf(':');
+            if (idx <= 0 || idx == token.length() - 1) {
+                throw new ParameterException("message.coreprotect.params.invalid_pair", token);
+            }
+
+            String key = token.substring(0, idx).toLowerCase();
+            String value = token.substring(idx + 1);
+
+            switch (key) {
+                case "t", "time" -> params.seconds = TimeUtil.parseDurationSeconds(value);
+                case "r", "radius" -> params.radius = parseInt(value, "message.coreprotect.params.radius_invalid");
+                case "u", "user" -> params.playerName = value;
+                case "p", "page" -> {
+                    Integer page = parseInt(value, "message.coreprotect.params.page_invalid");
+                    if (page == null || page <= 0) {
+                        throw new ParameterException("message.coreprotect.params.page_invalid", value);
+                    }
+                    params.page = page;
+                }
+                default -> throw new ParameterException("message.coreprotect.params.unknown_key", key);
+            }
+        }
+
+        return params;
+    }
+
     public static PurgeParams parsePurge(String input) throws ParameterException {
         PurgeParams params = new PurgeParams();
 

@@ -24,7 +24,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
-import java.time.ZoneOffset;
 
 public final class DatabaseManager {
 
@@ -200,6 +199,17 @@ public final class DatabaseManager {
         }
     }
 
+    public record DbLookupResult(long timeEpoch,
+                                 String playerName,
+                                 String actionType,
+                                 String oldBlock,
+                                 String newBlock,
+                                 ResourceKey<Level> dimension,
+                                 int x,
+                                 int y,
+                                 int z) {
+    }
+
     public synchronized List<DbBlockAction> getBlockHistory(ResourceKey<Level> dimension,
                                                             BlockPos pos,
                                                             int limit,
@@ -236,6 +246,95 @@ public final class DatabaseManager {
             }
         } catch (SQLException e) {
             Coreprotect.LOGGER.error("[Coreprotect] Ошибка чтения истории блока из БД", e);
+        }
+
+        return result;
+    }
+
+    public synchronized List<DbLookupResult> getLookupHistory(ResourceKey<Level> dimension,
+                                                              BlockPos center,
+                                                              int radius,
+                                                              Long sinceEpoch,
+                                                              String playerName,
+                                                              int limit,
+                                                              int offset) {
+        List<DbLookupResult> result = new ArrayList<>();
+        if (connection == null) return result;
+
+        StringBuilder sql = new StringBuilder("""
+            SELECT time_epoch, player_name, action_type, old_block, new_block, x, y, z
+            FROM block_actions
+            WHERE dimension = ? AND x BETWEEN ? AND ? AND y BETWEEN ? AND ? AND z BETWEEN ? AND ?
+        """);
+
+        if (sinceEpoch != null) {
+            sql.append(" AND time_epoch >= ?");
+        }
+
+        if (playerName != null) {
+            sql.append(" AND LOWER(player_name) = LOWER(?)");
+        }
+
+        sql.append(" ORDER BY time_epoch DESC LIMIT ? OFFSET ?;");
+
+        try (PreparedStatement ps = connection.prepareStatement(sql.toString())) {
+            int idx = 1;
+            ps.setString(idx++, dimension.location().toString());
+            ps.setInt(idx++, center.getX() - radius);
+            ps.setInt(idx++, center.getX() + radius);
+            ps.setInt(idx++, center.getY() - radius);
+            ps.setInt(idx++, center.getY() + radius);
+            ps.setInt(idx++, center.getZ() - radius);
+            ps.setInt(idx++, center.getZ() + radius);
+
+            if (sinceEpoch != null) {
+                ps.setLong(idx++, sinceEpoch);
+            }
+
+            if (playerName != null) {
+                ps.setString(idx++, playerName);
+            }
+
+            ps.setInt(idx++, limit);
+            ps.setInt(idx, offset);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                long radiusSq = (long) radius * radius;
+                while (rs.next()) {
+                    int x = rs.getInt("x");
+                    int y = rs.getInt("y");
+                    int z = rs.getInt("z");
+
+                    long dx = x - center.getX();
+                    long dy = y - center.getY();
+                    long dz = z - center.getZ();
+
+                    long distSq = dx * dx + dy * dy + dz * dz;
+                    if (distSq > radiusSq) {
+                        continue;
+                    }
+
+                    long timeEpoch = rs.getLong("time_epoch");
+                    String dbPlayerName = rs.getString("player_name");
+                    String actionType = rs.getString("action_type");
+                    String oldBlock = rs.getString("old_block");
+                    String newBlock = rs.getString("new_block");
+
+                    result.add(new DbLookupResult(
+                            timeEpoch,
+                            dbPlayerName,
+                            actionType,
+                            oldBlock,
+                            newBlock,
+                            dimension,
+                            x,
+                            y,
+                            z
+                    ));
+                }
+            }
+        } catch (SQLException e) {
+            Coreprotect.LOGGER.error("[Coreprotect] Ошибка чтения истории из БД", e);
         }
 
         return result;

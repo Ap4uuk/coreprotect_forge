@@ -17,6 +17,7 @@
   "message.coreprotect.params.missing": "Параметры не заданы.",
   "message.coreprotect.params.invalid_pair": "Неверный параметр: %s",
   "message.coreprotect.params.radius_invalid": "Неверный радиус: %s",
+  "message.coreprotect.params.page_invalid": "Неверный номер страницы: %s",
   "message.coreprotect.params.id_invalid": "Неверный id: %s",
   "message.coreprotect.params.unknown_key": "Неизвестный параметр: %s",
   "message.coreprotect.params.time_missing": "Не указан параметр времени t:<...>.",
@@ -46,5 +47,12 @@
   "message.coreprotect.inspect.line": "%s | %s | %s | %s -> %s",
   "message.coreprotect.inspect.no_more_pages": "Больше страниц нет, история сброшена.",
   "message.coreprotect.inspect.no_records": "Нет записей для этого блока.",
-  "message.coreprotect.inspect.next_hint": "Зажмите Shift и кликните снова, чтобы увидеть следующую страницу."
+  "message.coreprotect.inspect.next_hint": "Зажмите Shift и кликните снова, чтобы увидеть следующую страницу.",
+  "message.coreprotect.lookup.header": "Поиск вокруг %s (%s)",
+  "message.coreprotect.lookup.filters": "Радиус: %s, Время: %s%s",
+  "message.coreprotect.lookup.page": "Страница %s",
+  "message.coreprotect.lookup.all_time": "всё время",
+  "message.coreprotect.lookup.empty": "Не найдено записей по заданным параметрам.",
+  "message.coreprotect.lookup.no_more_pages": "Больше страниц для вывода нет.",
+  "message.coreprotect.lookup.next_hint": "Укажите p:%s, чтобы запросить следующую страницу."
 }
