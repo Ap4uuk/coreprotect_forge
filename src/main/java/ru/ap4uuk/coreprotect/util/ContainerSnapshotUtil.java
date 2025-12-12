@@ -14,6 +14,9 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.CompoundContainer;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.EnchantedBookItem;
+import net.minecraft.world.item.enchantment.Enchantment;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -23,12 +26,10 @@ import net.minecraft.world.level.block.state.properties.ChestType;
 import ru.ap4uuk.coreprotect.Coreprotect;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 public final class ContainerSnapshotUtil {
 
@@ -175,7 +176,7 @@ public final class ContainerSnapshotUtil {
 
                 int slot = entry.getInt(SLOT_KEY);
                 CompoundTag stackTag = entry.getCompound(STACK_KEY);
-                ItemStack stack = ItemStack.of(stackTag);
+                ItemStack stack = safeItemStack(stackTag);
 
                 if (!stack.isEmpty()) {
                     items.put(slot, stack);
@@ -214,15 +215,14 @@ public final class ContainerSnapshotUtil {
     public static Component describeSnapshot(String serialized) {
         Map<Integer, ItemStack> items = deserializeSnapshot(serialized);
         if (items.isEmpty()) {
-            return Component.literal("[]").withStyle(ChatFormatting.AQUA);
+            return Component.literal("[]").withStyle(ChatFormatting.GRAY);
         }
 
-        String text = items.entrySet().stream()
-                .sorted(Comparator.comparingInt(Map.Entry::getKey))
-                .map(e -> formatEntry(e.getKey(), e.getValue()))
-                .collect(Collectors.joining("; ", "[", "]"));
-
-        return Component.literal(text).withStyle(ChatFormatting.AQUA);
+        List<Component> entries = aggregateEntries(items.values());
+        MutableComponent out = Component.literal("[").withStyle(ChatFormatting.GRAY);
+        out.append(joinComponents(entries));
+        out.append(Component.literal("]").withStyle(ChatFormatting.GRAY));
+        return out;
     }
 
     public static ContainerChange describeChange(String beforeSerialized, String afterSerialized) {
@@ -268,6 +268,18 @@ public final class ContainerSnapshotUtil {
         return ordered;
     }
 
+    private static List<Component> aggregateEntries(Iterable<ItemStack> stacks) {
+        Map<ItemKey, Integer> counts = new HashMap<>();
+        for (ItemStack stack : stacks) {
+            accumulate(counts, stack, stack.getCount());
+        }
+
+        return counts.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> formatEntry(e.getKey(), e.getValue()))
+                .toList();
+    }
+
     private static void accumulate(Map<ItemKey, Integer> diffs, ItemStack stack, int delta) {
         if (stack.isEmpty() || delta == 0) return;
 
@@ -289,10 +301,7 @@ public final class ContainerSnapshotUtil {
             return Component.literal("[]").withStyle(ChatFormatting.GRAY);
         }
 
-        MutableComponent out = Component.literal("[").withStyle(ChatFormatting.GRAY);
-        out.append(joinComponents(entries));
-        out.append(Component.literal("]").withStyle(ChatFormatting.GRAY));
-        return out;
+        return joinComponents(entries);
     }
 
     private static Component joinComponents(List<Component> components) {
@@ -313,20 +322,155 @@ public final class ContainerSnapshotUtil {
     }
 
     private static Component formatEntry(ItemKey key, int count) {
-        MutableComponent out = Component.literal(count + "x ").withStyle(ChatFormatting.AQUA);
-        MutableComponent itemComponent = Component.literal(key.displayName()).withStyle(ChatFormatting.WHITE);
+        ItemStack stack = recreateStack(key, count);
+        String name = itemDisplayName(stack, key.itemId());
+        String tagSummary = tagSummary(stack);
 
-        if (!key.tag().isEmpty()) {
-            itemComponent.append(Component.literal(" " + key.tag()).withStyle(ChatFormatting.DARK_GRAY));
+        MutableComponent out = Component.literal(count + "x ").withStyle(ChatFormatting.AQUA);
+        MutableComponent itemComponent = Component.literal(name).withStyle(ChatFormatting.WHITE);
+
+        if (!tagSummary.isEmpty()) {
+            itemComponent.append(Component.literal(" " + tagSummary).withStyle(ChatFormatting.DARK_GRAY));
         }
 
         out.append(itemComponent);
         return out;
     }
 
-    private static String formatEntry(int slot, ItemStack stack) {
-        CompoundTag tag = stack.save(new CompoundTag());
-        return slot + ":" + tag;
+    private static ItemStack safeItemStack(CompoundTag stackTag) {
+        try {
+            ItemStack stack = ItemStack.of(stackTag);
+            if (!stack.isEmpty()) {
+                return stack;
+            }
+        } catch (Exception e) {
+            Coreprotect.LOGGER.warn("[Coreprotect] Не удалось прочитать предмет из снапшота: {}", e.getMessage());
+        }
+
+        return createUnknownStack(stackTag);
+    }
+
+    private static ItemStack createUnknownStack(CompoundTag stackTag) {
+        String id = stackTag.getString("id");
+        int count = Math.max(1, stackTag.contains("Count", Tag.TAG_ANY_NUMERIC) ? stackTag.getInt("Count") : 1);
+
+        ItemStack placeholder = new ItemStack(Items.BARRIER, count);
+        if (!id.isEmpty()) {
+            placeholder.setHoverName(Component.literal("Unknown/Invalid item " + id));
+        }
+        return placeholder;
+    }
+
+    private static ItemStack recreateStack(ItemKey key, int count) {
+        return BuiltInRegistries.ITEM.getOptional(key.itemId())
+                .map(item -> {
+                    ItemStack stack = new ItemStack(item);
+                    if (!key.tag().isEmpty()) {
+                        stack.setTag(key.tag().copy());
+                    }
+                    stack.setCount(count);
+                    return stack;
+                })
+                .orElse(ItemStack.EMPTY);
+    }
+
+    private static String itemDisplayName(ItemStack stack, ResourceLocation fallbackId) {
+        if (!stack.isEmpty()) {
+            try {
+                String hover = stack.getHoverName().getString();
+                if (!hover.isBlank()) {
+                    return hover;
+                }
+            } catch (Exception ignored) {}
+
+            String descriptionId = stack.getDescriptionId();
+            if (descriptionId != null && !descriptionId.isBlank()) {
+                return Component.translatable(descriptionId).getString();
+            }
+        }
+
+        return fallbackId == null ? "unknown" : fallbackId.toString();
+    }
+
+    private static String tagSummary(ItemStack stack) {
+        List<String> parts = new ArrayList<>();
+
+        parts.addAll(describeEnchantments(stack));
+        describeCustomName(stack).ifPresent(parts::add);
+        describeLore(stack).ifPresent(parts::add);
+
+        if (parts.isEmpty()) return "";
+
+        return "{" + shorten(String.join(", ", parts), 120) + "}";
+    }
+
+    private static List<String> describeEnchantments(ItemStack stack) {
+        List<String> result = new ArrayList<>();
+
+        List<ListTag> sources = List.of(stack.getEnchantmentTags(),
+                stack.getItem() instanceof EnchantedBookItem ? EnchantedBookItem.getEnchantments(stack) : new ListTag());
+
+        for (ListTag enchantments : sources) {
+            for (Tag tag : enchantments) {
+                if (!(tag instanceof CompoundTag enchantTag)) continue;
+
+                String idStr = enchantTag.getString("id");
+                ResourceLocation id = ResourceLocation.tryParse(idStr);
+                int level = enchantTag.getShort("lvl");
+
+                String name = idStr;
+                if (id != null) {
+                    name = BuiltInRegistries.ENCHANTMENT.getOptional(id)
+                            .map(enchantment -> enchantment.getFullname(level).getString())
+                            .orElse(id.toString() + (level > 0 ? " " + level : ""));
+                }
+
+                result.add(name);
+            }
+        }
+
+        return result;
+    }
+
+    private static java.util.Optional<String> describeCustomName(ItemStack stack) {
+        if (!stack.hasCustomHoverName()) return java.util.Optional.empty();
+        try {
+            return java.util.Optional.of("Name=\"" + shorten(stack.getHoverName().getString(), 40) + "\"");
+        } catch (Exception ignored) {
+            return java.util.Optional.of("CustomName");
+        }
+    }
+
+    private static java.util.Optional<String> describeLore(ItemStack stack) {
+        CompoundTag display = stack.getTagElement("display");
+        if (display == null || !display.contains("Lore", Tag.TAG_LIST)) return java.util.Optional.empty();
+
+        ListTag loreList = display.getList("Lore", Tag.TAG_STRING);
+        List<String> lines = new ArrayList<>();
+
+        for (Tag tag : loreList) {
+            if (!(tag instanceof net.minecraft.nbt.StringTag loreTag)) continue;
+
+            String text = loreTag.getAsString();
+            try {
+                Component parsed = Component.Serializer.fromJson(text);
+                if (parsed != null) {
+                    text = parsed.getString();
+                }
+            } catch (Exception ignored) {}
+
+            lines.add(shorten(text, 40));
+        }
+
+        if (lines.isEmpty()) return java.util.Optional.empty();
+
+        return java.util.Optional.of("Lore=" + shorten(String.join(" | ", lines), 60));
+    }
+
+    private static String shorten(String text, int maxLength) {
+        if (text == null) return "";
+        if (text.length() <= maxLength) return text;
+        return text.substring(0, Math.max(0, maxLength - 1)) + "…";
     }
 
     public static boolean applySnapshot(Level level, BlockPos pos, String serialized) {
