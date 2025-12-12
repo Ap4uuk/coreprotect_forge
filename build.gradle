@@ -93,10 +93,14 @@ dependencies {
     // MariaDB и PostgreSQL вшиваются вместе с SQLite, без лишнего логирования
     shade('org.mariadb.jdbc:mariadb-java-client:3.4.1') {
         exclude group: 'org.slf4j'
+        exclude group: 'net.java.dev.jna'
+        exclude group: 'com.sun.jna'
     }
 
     shade('org.postgresql:postgresql:42.7.3') {
         exclude group: 'org.slf4j'
+        exclude group: 'net.java.dev.jna'
+        exclude group: 'com.sun.jna'
     }
 
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
@@ -140,6 +144,9 @@ shadowJar {
 
     // slf4j на всякий случай выкидываем
     exclude 'org/slf4j/**'
+    exclude 'com/sun/jna/**'
+    exclude 'com/sun/jna/*/**'
+    exclude 'net/java/dev/jna/**'
 
     finalizedBy 'reobfShadowJar'
 }
