@@ -3,6 +3,7 @@ package ru.ap4uuk.coreprotect;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.LivingEntity;
@@ -33,6 +34,7 @@ import ru.ap4uuk.coreprotect.util.ActionContext;
 import ru.ap4uuk.coreprotect.util.BlockLogging;
 import ru.ap4uuk.coreprotect.util.ContainerSnapshotUtil;
 import ru.ap4uuk.coreprotect.util.HistoryFormatter;
+import ru.ap4uuk.coreprotect.util.PaginationUtil;
 import ru.ap4uuk.coreprotect.util.TextUtil;
 import ru.ap4uuk.coreprotect.util.WorldEditIntegration;
 
@@ -328,6 +330,12 @@ public class ModEvents {
     }
 
     private static void inspectPos(ServerPlayer player, Level level, BlockPos pos) {
+        boolean advancePage = player.isShiftKeyDown();
+        InspectManager.InspectSession session = InspectManager.getSession(player, level.dimension(), pos, advancePage);
+        renderInspectHistory(player, level, session);
+    }
+
+    private static void renderInspectHistory(ServerPlayer player, Level level, InspectManager.InspectSession session) {
         var db = DatabaseManager.get();
         if (db == null) {
             player.sendSystemMessage(TextUtil.translate("message.coreprotect.db_unavailable"));
@@ -335,44 +343,42 @@ public class ModEvents {
         }
 
         int pageSize = CoreprotectConfig.COMMON.inspectHistoryLimit.get();
-        boolean advancePage = player.isShiftKeyDown();
-        InspectManager.InspectSession session = InspectManager.getSession(player, level.dimension(), pos, advancePage);
-        int offset = session.page() * pageSize;
+        int total = db.getBlockHistoryCount(level.dimension(), session.pos());
+        int totalPages = Math.max(1, (int) Math.ceil(total / (double) pageSize));
 
-        List<DbBlockAction> history = db.getBlockHistory(level.dimension(), pos, pageSize + 1, offset);
-        boolean hasNext = history.size() > pageSize;
-        if (hasNext) {
-            history = history.subList(0, pageSize);
-        }
-
-        if (history.isEmpty()) {
-            if (session.page() > 0) {
-                InspectManager.resetPagination(player);
-                player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.no_more_pages"));
-            } else {
-                player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.no_records"));
-            }
+        if (total == 0) {
+            InspectManager.resetPagination(player);
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.no_records"));
             return;
         }
+
+        if (session.page() >= totalPages) {
+            InspectManager.resetPagination(player);
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.no_more_pages"));
+            return;
+        }
+
+        int offset = session.page() * pageSize;
+        List<DbBlockAction> history = db.getBlockHistory(level.dimension(), session.pos(), pageSize, offset);
 
         Component header = TextUtil.translate(
                 "message.coreprotect.inspect.header",
                 Component.literal(level.dimension().location().toString()).withStyle(ChatFormatting.AQUA),
-                Component.literal(pos.getX() + "," + pos.getY() + "," + pos.getZ()).withStyle(ChatFormatting.WHITE)
+                Component.literal(session.pos().getX() + "," + session.pos().getY() + "," + session.pos().getZ()).withStyle(ChatFormatting.WHITE)
         );
         player.sendSystemMessage(header);
 
-        player.sendSystemMessage(TextUtil.translate(
-                "message.coreprotect.inspect.page",
-                Component.literal(String.valueOf(session.page() + 1)).withStyle(ChatFormatting.GOLD)
-        ));
+        int currentPage = session.page() + 1;
+        MutableComponent pageLine = TextUtil.translate(
+                "message.coreprotect.inspect.page_total",
+                Component.literal(String.valueOf(currentPage)).withStyle(ChatFormatting.GOLD),
+                Component.literal(String.valueOf(totalPages)).withStyle(ChatFormatting.GOLD)
+        );
+        pageLine.append(PaginationUtil.buildPager(p -> "/co ipage " + p, currentPage, totalPages));
+        player.sendSystemMessage(pageLine);
 
         for (DbBlockAction h : history) {
             player.sendSystemMessage(HistoryFormatter.formatHistoryLine(h));
-        }
-
-        if (hasNext) {
-            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.next_hint"));
         }
     }
 
