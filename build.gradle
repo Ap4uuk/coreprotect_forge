@@ -90,6 +90,15 @@ dependencies {
         exclude group: 'org.slf4j'
     }
 
+    // MariaDB и PostgreSQL вшиваются вместе с SQLite, без лишнего логирования
+    shade('org.mariadb.jdbc:mariadb-java-client:3.4.1') {
+        exclude group: 'org.slf4j'
+    }
+
+    shade('org.postgresql:postgresql:42.7.3') {
+        exclude group: 'org.slf4j'
+    }
+
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 
     implementation fg.deobf('com.sk89q.worldedit:worldedit-forge-mc1.20:7.2.15')
