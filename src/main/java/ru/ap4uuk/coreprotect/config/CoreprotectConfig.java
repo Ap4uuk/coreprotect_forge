@@ -15,11 +15,16 @@ public final class CoreprotectConfig {
     }
 
     public static class Common {
-        // Тип хранилища: пока поддерживаем только SQLITE
+        // Тип хранилища: SQLITE, MARIADB или POSTGRESQL
         public final ForgeConfigSpec.ConfigValue<String> storageType;
 
         // Путь к SQLite-файлу
         public final ForgeConfigSpec.ConfigValue<String> sqlitePath;
+
+        // JDBC-подключение для MariaDB / PostgreSQL
+        public final ForgeConfigSpec.ConfigValue<String> sqlUrl;
+        public final ForgeConfigSpec.ConfigValue<String> sqlUser;
+        public final ForgeConfigSpec.ConfigValue<String> sqlPassword;
 
         // Сколько записей показывать при инспекции блока
         public final ForgeConfigSpec.IntValue inspectHistoryLimit;
@@ -28,12 +33,24 @@ public final class CoreprotectConfig {
             builder.push("storage");
 
             storageType = builder
-                    .comment("Тип хранилища: SQLITE (другие типы пока не реализованы)")
+                    .comment("Тип хранилища: SQLITE, MARIADB или POSTGRESQL")
                     .define("storageType", "SQLITE");
 
             sqlitePath = builder
                     .comment("Путь к SQLite файлу относительно корня сервера")
                     .define("sqlitePath", "coreprotect/coreprotect.sqlite");
+
+            sqlUrl = builder
+                    .comment("JDBC URL для MariaDB/PostgreSQL (например jdbc:mariadb://localhost:3306/coreprotect)")
+                    .define("sqlUrl", "jdbc:mariadb://localhost:3306/coreprotect");
+
+            sqlUser = builder
+                    .comment("Пользователь для подключения к MariaDB/PostgreSQL")
+                    .define("sqlUser", "coreprotect");
+
+            sqlPassword = builder
+                    .comment("Пароль для подключения к MariaDB/PostgreSQL")
+                    .define("sqlPassword", "coreprotect");
 
             builder.pop();
 

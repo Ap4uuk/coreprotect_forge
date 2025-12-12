@@ -93,8 +93,18 @@ public class ModEvents {
             Path dbPath = Paths.get(pathStr);
             DatabaseManager.initSQLite(dbPath);
             LOGGER.info("[Coreprotect] База данных (SQLite) инициализирована: {}", dbPath.toAbsolutePath());
+        } else if ("MARIADB".equals(storageType)) {
+            String url = CoreprotectConfig.COMMON.sqlUrl.get();
+            String user = CoreprotectConfig.COMMON.sqlUser.get();
+            String password = CoreprotectConfig.COMMON.sqlPassword.get();
+            DatabaseManager.initMariaDb(url, user, password);
+        } else if ("POSTGRESQL".equals(storageType)) {
+            String url = CoreprotectConfig.COMMON.sqlUrl.get();
+            String user = CoreprotectConfig.COMMON.sqlUser.get();
+            String password = CoreprotectConfig.COMMON.sqlPassword.get();
+            DatabaseManager.initPostgreSql(url, user, password);
         } else {
-            LOGGER.error("[Coreprotect] Тип хранилища '{}' не поддерживается. Используйте SQLITE.", storageTypeRaw);
+            LOGGER.error("[Coreprotect] Тип хранилища '{}' не поддерживается. Используйте SQLITE, MARIADB или POSTGRESQL.", storageTypeRaw);
         }
 
         WorldEditIntegration.tryRegister();
