@@ -803,6 +803,14 @@ public final class DatabaseManager {
                                                  BlockPos pos,
                                                  BlockState before,
                                                  BlockState after) {
+        insertRollbackEntry(sessionId, dimension, pos, serializeBlockState(before), serializeBlockState(after));
+    }
+
+    public synchronized void insertRollbackEntry(int sessionId,
+                                                 ResourceKey<Level> dimension,
+                                                 BlockPos pos,
+                                                 String before,
+                                                 String after) {
         String sql = """
             INSERT INTO rollback_session_entries (
                 session_id, dimension, x, y, z, before_block, after_block
@@ -815,8 +823,8 @@ public final class DatabaseManager {
             ps.setInt(3, pos.getX());
             ps.setInt(4, pos.getY());
             ps.setInt(5, pos.getZ());
-            ps.setString(6, serializeBlockState(before));
-            ps.setString(7, serializeBlockState(after));
+            ps.setString(6, before);
+            ps.setString(7, after);
 
             ps.executeUpdate();
             connection.commit();
