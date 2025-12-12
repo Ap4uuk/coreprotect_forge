@@ -1,17 +1,25 @@
 package ru.ap4uuk.coreprotect.util;
 
+import com.mojang.brigadier.StringReader;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.serialization.DataResult;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtOps;
 import net.minecraft.nbt.TagParser;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.commands.arguments.blocks.BlockStateParser;
+import net.minecraft.nbt.Tag;
 
+import java.util.Comparator;
 import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 public final class TextUtil {
 
@@ -36,40 +44,65 @@ public final class TextUtil {
         return Component.translatable(key).withStyle(ChatFormatting.YELLOW);
     }
 
-    public static Component blockName(String blockId) {
-        Block block = resolveBlock(blockId);
-        Component name = block.getName();
-        return name.copy().withStyle(ChatFormatting.AQUA);
-    }
+    public static Component blockName(String serialized) {
+        BlockState state = resolveBlockState(serialized);
+        MutableComponent name = state.getBlock().getName().copy().withStyle(ChatFormatting.AQUA);
 
-    private static Block resolveBlock(String serialized) {
-        String blockId = extractBlockId(serialized);
-        ResourceLocation location = ResourceLocation.tryParse(blockId);
-        if (location != null) {
-            return BuiltInRegistries.BLOCK.getOptional(location).orElse(Blocks.AIR);
+        String properties = formatProperties(state);
+        if (properties.isEmpty()) {
+            return name;
         }
-        return Blocks.AIR;
+
+        return name.append(Component.literal(" [" + properties + "]").withStyle(ChatFormatting.GRAY));
     }
 
-    private static String extractBlockId(String serialized) {
+    private static String formatProperties(BlockState state) {
+        return state.getValues().entrySet().stream()
+                .sorted(Comparator.comparing(entry -> entry.getKey().getName()))
+                .map(TextUtil::formatProperty)
+                .collect(Collectors.joining(", "));
+    }
+
+    private static String formatProperty(Map.Entry<Property<?>, Comparable<?>> entry) {
+        Property<?> property = entry.getKey();
+        Comparable<?> value = entry.getValue();
+
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        String valueName = ((Property) property).getName(value);
+
+        return property.getName() + "=" + valueName;
+    }
+
+    private static BlockState resolveBlockState(String serialized) {
         if (serialized == null || serialized.isEmpty()) {
-            return "minecraft:air";
+            return Blocks.AIR.defaultBlockState();
         }
 
         try {
-            CompoundTag tag = TagParser.parseTag(serialized);
-            if (tag.contains("Name")) {
-                return tag.getString("Name");
+            Tag tag = TagParser.parseTag(serialized);
+            DataResult<BlockState> parsed = BlockState.CODEC.parse(NbtOps.INSTANCE, tag);
+            if (parsed.result().isPresent()) {
+                return parsed.result().get();
             }
         } catch (CommandSyntaxException ignored) {
             // не SNBT — попробуем устаревшие форматы ниже
         }
 
-        int propertyIndex = serialized.indexOf('[');
-        if (propertyIndex > 0) {
-            return serialized.substring(0, propertyIndex);
+        try {
+            var reader = new StringReader(serialized);
+            var parsed = BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK.asLookup(), reader, false);
+            return parsed.blockState();
+        } catch (CommandSyntaxException ignored) {
+            // устаревший формат
         }
 
-        return serialized;
+        ResourceLocation location = ResourceLocation.tryParse(serialized);
+        if (location != null) {
+            return BuiltInRegistries.BLOCK.getOptional(location)
+                    .orElse(Blocks.AIR)
+                    .defaultBlockState();
+        }
+
+        return Blocks.AIR.defaultBlockState();
     }
 }

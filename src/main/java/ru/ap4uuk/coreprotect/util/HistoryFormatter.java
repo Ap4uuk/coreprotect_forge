@@ -80,6 +80,11 @@ public final class HistoryFormatter {
         }
 
         // обычные блоки
-        return TextUtil.blockName(serialized);
+        ChatFormatting color = isOldState ? ChatFormatting.RED : ChatFormatting.GREEN;
+        String prefix = isOldState ? "- " : "+ ";
+
+        return Component.literal(prefix)
+                .withStyle(color)
+                .append(TextUtil.blockName(serialized).copy());
     }
 }
