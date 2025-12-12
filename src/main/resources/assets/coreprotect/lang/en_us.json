@@ -1,6 +1,12 @@
 {
   "message.coreprotect.action.break": "broke",
   "message.coreprotect.action.place": "placed",
+  "message.coreprotect.action.explode": "explosion",
+  "message.coreprotect.action.piston": "piston move",
+  "message.coreprotect.action.fluid": "fluid flow",
+  "message.coreprotect.action.worldedit": "WorldEdit",
+  "message.coreprotect.action.container": "container",
+  "message.coreprotect.action.generate": "generated",
   "message.coreprotect.db_unavailable": "Database is unavailable.",
   "message.coreprotect.inspect.enabled": "Inspect mode enabled.",
   "message.coreprotect.inspect.disabled": "Inspect mode disabled.",
