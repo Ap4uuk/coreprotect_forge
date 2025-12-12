@@ -63,34 +63,33 @@ public final class DatabaseManager {
         }
 
         try {
-            boolean driverOk = false;
+            boolean driverLoaded = false;
             if (allowShaded) {
-                driverOk = tryLoadDriver("ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC",
-                        "[Coreprotect] Драйвер SQLite найден (shaded): {}");
+                driverLoaded = tryLoadDriver(
+                        "ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC",
+                        "[Coreprotect] Драйвер SQLite найден (shaded): {}"
+                );
             }
 
-            if (!driverOk) {
-                driverOk = tryLoadDriver("org.sqlite.JDBC",
-                        "[Coreprotect] Драйвер SQLite найден: {}");
-                if (!driverOk) {
-                    Coreprotect.LOGGER.error("[Coreprotect] Драйвер SQLite не найден в classpath! Проверь shadow/shade.");
-                    return;
-                }
+            if (!driverLoaded) {
+                driverLoaded = tryLoadDriver(
+                        "org.sqlite.JDBC",
+                        "[Coreprotect] Драйвер SQLite найден: {}"
+                );
             }
 
-            if (!driverOk) {
-                Coreprotect.LOGGER.error("[Coreprotect] Ни один из указанных JDBC-драйверов не найден: {}", driverClassNames);
+            if (!driverLoaded) {
+                Coreprotect.LOGGER.error("[Coreprotect] Драйвер SQLite не найден в classpath! Проверь shadow/shade.");
                 return;
             }
 
-            Connection conn;
-            if (username != null && !username.isBlank()) {
-                conn = DriverManager.getConnection(jdbcUrl, username, password == null ? "" : password);
-            } else {
-                conn = DriverManager.getConnection(jdbcUrl);
+            if (dbFile.getParent() != null) {
+                Files.createDirectories(dbFile.getParent());
             }
 
+            String url = "jdbc:sqlite:" + dbFile.toAbsolutePath();
             Connection conn = DriverManager.getConnection(url);
+
             initWithConnection(conn, Dialect.SQLITE);
             Coreprotect.LOGGER.info("[Coreprotect] SQLite инициализирован: {}", dbFile.toAbsolutePath());
         } catch (Exception e) {
