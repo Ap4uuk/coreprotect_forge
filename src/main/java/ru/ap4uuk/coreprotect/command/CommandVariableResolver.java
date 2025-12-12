@@ -1,8 +1,10 @@
 package ru.ap4uuk.coreprotect.command;
 
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import ru.ap4uuk.coreprotect.util.ParameterException;
 
 import java.util.Locale;
 import java.util.Map;
@@ -52,5 +54,19 @@ public final class CommandVariableResolver {
         matcher.appendTail(result);
 
         return result.toString();
+    }
+
+    public static ResourceKey<Level> parseDimension(String raw) throws ParameterException {
+        String cleaned = raw.trim();
+        if (cleaned.startsWith("#")) {
+            cleaned = cleaned.substring(1);
+        }
+
+        ResourceLocation id = ResourceLocation.tryParse(cleaned);
+        if (id == null) {
+            throw new ParameterException("message.coreprotect.params.dimension_invalid", raw);
+        }
+
+        return ResourceKey.create(Level.RESOURCE_KEY, id);
     }
 }

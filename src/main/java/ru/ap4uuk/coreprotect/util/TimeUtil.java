@@ -8,10 +8,10 @@ public final class TimeUtil {
      * Парсит строку вида "90s", "10m", "2h", "1h30m", "2d3h15m" в секунды.
      * Допустимые суффиксы: s, m, h, d.
      */
-    public static int parseDurationSeconds(String input) throws IllegalArgumentException {
+    public static int parseDurationSeconds(String input) throws ParameterException {
         input = input.trim().toLowerCase();
         if (input.isEmpty()) {
-            throw new IllegalArgumentException("empty duration");
+            throw new ParameterException("message.coreprotect.params.time_empty");
         }
 
         int totalSeconds = 0;
@@ -25,7 +25,7 @@ public final class TimeUtil {
                 currentNumber = currentNumber * 10 + (c - '0');
             } else {
                 if (currentNumber == 0) {
-                    throw new IllegalArgumentException("duration must have number before unit: " + input);
+                    throw new ParameterException("message.coreprotect.params.time_missing_number", input);
                 }
                 hasUnit = true;
                 switch (c) {
@@ -33,7 +33,7 @@ public final class TimeUtil {
                     case 'm' -> totalSeconds += currentNumber * 60;
                     case 'h' -> totalSeconds += currentNumber * 60 * 60;
                     case 'd' -> totalSeconds += currentNumber * 60 * 60 * 24;
-                    default -> throw new IllegalArgumentException("unknown unit '" + c + "' in " + input);
+                    default -> throw new ParameterException("message.coreprotect.params.time_unknown_unit", c, input);
                 }
                 currentNumber = 0;
             }
@@ -45,7 +45,7 @@ public final class TimeUtil {
         }
 
         if (totalSeconds <= 0) {
-            throw new IllegalArgumentException("duration must be > 0: " + input);
+            throw new ParameterException("message.coreprotect.params.time_non_positive", input);
         }
 
         return totalSeconds;

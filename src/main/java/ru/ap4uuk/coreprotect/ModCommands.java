@@ -18,6 +18,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import ru.ap4uuk.coreprotect.command.CoParamParser;
 import ru.ap4uuk.coreprotect.command.CommandVariableResolver;
+import ru.ap4uuk.coreprotect.command.PurgeParams;
 import ru.ap4uuk.coreprotect.command.RollbackParams;
 import ru.ap4uuk.coreprotect.inspect.InspectManager;
 import ru.ap4uuk.coreprotect.inspect.InspectTool;
@@ -26,6 +27,7 @@ import ru.ap4uuk.coreprotect.storage.DatabaseManager;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbForwardAction;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbRollbackAction;
 import ru.ap4uuk.coreprotect.util.ActionContext;
+import ru.ap4uuk.coreprotect.util.ParameterException;
 import ru.ap4uuk.coreprotect.util.TextUtil;
 
 import java.time.Instant;
@@ -162,6 +164,12 @@ public class ModCommands {
                                         })
                                 )
                         )
+                        .then(Commands.literal("purge")
+                                .requires(src -> EnumPermissions.PURGE.hasPermission(src))
+                                .then(Commands.argument("params", StringArgumentType.greedyString())
+                                        .executes(ctx -> executePurge(ctx.getSource(), StringArgumentType.getString(ctx, "params")))
+                                )
+                        )
                         .then(Commands.literal("tb")
                                 .requires(src -> EnumPermissions.TOOL.hasPermission(src))
                                 .executes(ctx -> {
@@ -202,6 +210,14 @@ public class ModCommands {
         }
     }
 
+    private static void sendMessage(CommandSourceStack source, Component message) {
+        if (source.getEntity() instanceof ServerPlayer player) {
+            player.sendSystemMessage(message);
+        } else {
+            source.sendSuccess(() -> message, false);
+        }
+    }
+
     private static int executeRollback(ServerPlayer player, String paramsStr) {
         DatabaseManager db = DatabaseManager.get();
         if (db == null) {
@@ -212,6 +228,9 @@ public class ModCommands {
         RollbackParams params;
         try {
             params = CoParamParser.parse(paramsStr);
+        } catch (ParameterException e) {
+            player.sendSystemMessage(TextUtil.translate(e.getTranslationKey(), e.getArgs()));
+            return 0;
         } catch (IllegalArgumentException e) {
             player.sendSystemMessage(TextUtil.translate("message.coreprotect.params_error", e.getMessage()));
             return 0;
@@ -310,6 +329,9 @@ public class ModCommands {
         RollbackParams params;
         try {
             params = CoParamParser.parse(paramsStr);
+        } catch (ParameterException e) {
+            player.sendSystemMessage(TextUtil.translate(e.getTranslationKey(), e.getArgs()));
+            return 0;
         } catch (IllegalArgumentException e) {
             player.sendSystemMessage(TextUtil.translate("message.coreprotect.params_error", e.getMessage()));
             return 0;
@@ -419,6 +441,62 @@ public class ModCommands {
         ));
 
         return applied;
+    }
+
+    private static int executePurge(CommandSourceStack source, String paramsStr) {
+        DatabaseManager db = DatabaseManager.get();
+        if (db == null) {
+            sendMessage(source, TextUtil.translate("message.coreprotect.db_unavailable"));
+            return 0;
+        }
+
+        PurgeParams params;
+        try {
+            if (source.getEntity() instanceof ServerPlayer player) {
+                paramsStr = CommandVariableResolver.resolve(player, paramsStr);
+            }
+            params = CoParamParser.parsePurge(paramsStr);
+        } catch (ParameterException e) {
+            sendMessage(source, TextUtil.translate(e.getTranslationKey(), e.getArgs()));
+            return 0;
+        } catch (IllegalArgumentException e) {
+            sendMessage(source, TextUtil.translate("message.coreprotect.params_error", e.getMessage()));
+            return 0;
+        }
+
+        boolean isPlayer = source.getEntity() instanceof ServerPlayer;
+        int minSeconds = isPlayer ? 60 * 60 * 24 * 30 : 60 * 60 * 24; // 30d for player, 24h for console
+        if (params.seconds < minSeconds) {
+            sendMessage(source, TextUtil.translate(
+                    "message.coreprotect.purge.time_limit",
+                    Component.literal(String.valueOf(minSeconds)).withStyle(ChatFormatting.GOLD)
+            ));
+            return 0;
+        }
+
+        long now = Instant.now().getEpochSecond();
+        long olderThan = now - params.seconds;
+
+        sendMessage(source, TextUtil.translate(
+                "message.coreprotect.purge.start",
+                Component.literal(String.valueOf(params.seconds)).withStyle(ChatFormatting.GOLD),
+                params.dimension == null
+                        ? Component.translatable("message.coreprotect.purge.all_worlds").withStyle(ChatFormatting.GRAY)
+                        : Component.literal(params.dimension.location().toString()).withStyle(ChatFormatting.AQUA)
+        ));
+
+        int removed = db.purgeOldData(olderThan, params.dimension, params.includeBlocks);
+
+        sendMessage(source, TextUtil.translate(
+                "message.coreprotect.purge.complete",
+                Component.literal(String.valueOf(removed)).withStyle(ChatFormatting.GOLD)
+        ));
+
+        if (params.optimize) {
+            sendMessage(source, TextUtil.translate("message.coreprotect.purge.optimize_ignored"));
+        }
+
+        return removed;
     }
 
 }
