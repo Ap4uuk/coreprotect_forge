@@ -111,6 +111,13 @@ public final class ContainerSnapshotUtil {
         if (serialized == null || serialized.isBlank()) {
             return Map.of();
         }
+
+        serialized = serialized.trim();
+        if ((serialized.startsWith("\"") && serialized.endsWith("\""))
+                || (serialized.startsWith("'") && serialized.endsWith("'"))) {
+            serialized = serialized.substring(1, serialized.length() - 1).trim();
+        }
+
         try {
             Tag parsed = TagParser.parseTag(serialized);
             if (!(parsed instanceof ListTag listTag)) {
