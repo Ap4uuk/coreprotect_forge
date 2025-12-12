@@ -730,4 +730,52 @@ public final class DatabaseManager {
         }
     }
 
+    public synchronized int purgeOldData(long olderThanEpochSeconds,
+                                         ResourceKey<Level> dimension,
+                                         List<String> includeBlocks) {
+        if (connection == null) {
+            return 0;
+        }
+
+        StringBuilder sql = new StringBuilder("DELETE FROM block_actions WHERE time_epoch < ?");
+        if (dimension != null) {
+            sql.append(" AND dimension = ?");
+        }
+
+        if (includeBlocks != null && !includeBlocks.isEmpty()) {
+            String placeholders = String.join(",", java.util.Collections.nCopies(includeBlocks.size(), "?"));
+            sql.append(" AND (old_block IN (" + placeholders + ") OR new_block IN (" + placeholders + "))");
+        }
+
+        try (PreparedStatement ps = connection.prepareStatement(sql.toString())) {
+            int idx = 1;
+            ps.setLong(idx++, olderThanEpochSeconds);
+            if (dimension != null) {
+                ps.setString(idx++, dimension.location().toString());
+            }
+
+            if (includeBlocks != null && !includeBlocks.isEmpty()) {
+                for (String block : includeBlocks) {
+                    ps.setString(idx++, block);
+                }
+                for (String block : includeBlocks) {
+                    ps.setString(idx++, block);
+                }
+            }
+
+            int deleted = ps.executeUpdate();
+            connection.commit();
+            return deleted;
+        } catch (SQLException e) {
+            Coreprotect.LOGGER.error("[Coreprotect] Ошибка purge старых данных", e);
+            try {
+                connection.rollback();
+            } catch (SQLException ex) {
+                Coreprotect.LOGGER.error("[Coreprotect] Ошибка rollback при purge", ex);
+            }
+        }
+
+        return 0;
+    }
+
 }

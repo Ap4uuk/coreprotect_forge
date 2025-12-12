@@ -9,7 +9,8 @@ public enum EnumPermissions {
     INSPECT("coreprotect.command.inspect", 0),
     TOOL("coreprotect.command.tool", 0),
     ROLLBACK("coreprotect.command.rollback", 2),
-    RESTORE("coreprotect.command.restore", 2);
+    RESTORE("coreprotect.command.restore", 2),
+    PURGE("coreprotect.command.purge", 2);
 
     private final String node;
     private final int requiredLevel;
