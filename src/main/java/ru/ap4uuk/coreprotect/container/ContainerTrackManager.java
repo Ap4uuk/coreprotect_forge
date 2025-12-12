@@ -24,7 +24,8 @@ public final class ContainerTrackManager {
 
     public static void start(ServerPlayer player, Level level, BlockPos pos) {
         BlockEntity be = level.getBlockEntity(pos);
-        if (!(be instanceof Container container)) return;
+        Container container = ContainerSnapshotUtil.resolveContainer(level, pos, be);
+        if (container == null) return;
 
         String before = ContainerSnapshotUtil.serializeContainer(container);
         SESSIONS.put(player.getUUID(), new Session(level.dimension().location().toString(), pos, before));
@@ -40,7 +41,8 @@ public final class ContainerTrackManager {
         if (!level.dimension().location().toString().equals(session.dimensionId)) return;
 
         BlockEntity be = level.getBlockEntity(session.pos);
-        if (!(be instanceof Container container)) return;
+        Container container = ContainerSnapshotUtil.resolveContainer(level, session.pos, be);
+        if (container == null) return;
 
         String after = ContainerSnapshotUtil.serializeContainer(container);
 
