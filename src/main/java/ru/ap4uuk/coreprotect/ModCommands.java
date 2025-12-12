@@ -13,6 +13,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.Container;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -29,10 +30,12 @@ import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbForwardAction;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbRollbackAction;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbLookupResult;
 import ru.ap4uuk.coreprotect.util.ActionContext;
+import ru.ap4uuk.coreprotect.util.ContainerSnapshotUtil;
 import ru.ap4uuk.coreprotect.util.HistoryFormatter;
 import ru.ap4uuk.coreprotect.util.ParameterException;
 import ru.ap4uuk.coreprotect.util.TextUtil;
 import ru.ap4uuk.coreprotect.config.CoreprotectConfig;
+import ru.ap4uuk.coreprotect.model.BlockAction;
 
 import java.time.Instant;
 import java.util.List;
@@ -245,6 +248,17 @@ public class ModCommands {
         }
     }
 
+    private static BlockAction.Type parseActionType(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return BlockAction.Type.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private static int executeLookup(ServerPlayer player, String paramsStr) {
         DatabaseManager db = DatabaseManager.get();
         if (db == null) {
@@ -417,10 +431,25 @@ public class ModCommands {
         try {
             for (DbRollbackAction a : actions) {
                 BlockPos pos = new BlockPos(a.x, a.y, a.z);
+                BlockAction.Type type = parseActionType(a.actionType);
 
-                // состояние ДО rollback
+                if (type == BlockAction.Type.CONTAINER) {
+                    if (!(level.getBlockEntity(pos) instanceof Container container)) {
+                        continue;
+                    }
+
+                    String beforeSnapshot = ContainerSnapshotUtil.serializeContainer(container);
+                    if (!ContainerSnapshotUtil.applySnapshot(level, pos, a.oldBlock)) {
+                        continue;
+                    }
+
+                    applied++;
+                    db.insertRollbackEntry(sessionId, level.dimension(), pos, beforeSnapshot,
+                            ContainerSnapshotUtil.serializeContainer(container));
+                    continue;
+                }
+
                 var before = level.getBlockState(pos);
-                // целевое состояние (то, что было "old_block")
                 var targetState = db.deserializeBlockState(a.oldBlock);
 
                 if (before == targetState) {
@@ -430,7 +459,6 @@ public class ModCommands {
                 level.setBlock(pos, targetState, 3);
                 applied++;
 
-                // записываем в сессию: before -> after
                 db.insertRollbackEntry(sessionId, level.dimension(), pos, before, targetState);
             }
         } finally {
@@ -506,6 +534,14 @@ public class ModCommands {
         try {
             for (DbForwardAction a : actions) {
                 BlockPos pos = new BlockPos(a.x, a.y, a.z);
+                BlockAction.Type type = parseActionType(a.actionType);
+                if (type == BlockAction.Type.CONTAINER) {
+                    if (ContainerSnapshotUtil.applySnapshot(level, pos, a.newBlock)) {
+                        applied++;
+                    }
+                    continue;
+                }
+
                 var targetState = db.deserializeBlockState(a.newBlock);
                 level.setBlock(pos, targetState, 3);
                 applied++;
@@ -552,6 +588,13 @@ public class ModCommands {
                 BlockPos pos = new BlockPos(e.x, e.y, e.z);
 
                 // Для restore нам нужно вернуть блок к состоянию ДО rollback’а
+                if (ContainerSnapshotUtil.isSerializedSnapshot(e.beforeBlock)) {
+                    if (ContainerSnapshotUtil.applySnapshot(level, pos, e.beforeBlock)) {
+                        applied++;
+                    }
+                    continue;
+                }
+
                 var beforeState = db.deserializeBlockState(e.beforeBlock);
                 level.setBlock(pos, beforeState, 3);
                 applied++;

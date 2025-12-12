@@ -13,7 +13,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraftforge.event.entity.item.ItemTossEvent;
 import net.minecraftforge.event.entity.living.LivingDropsEvent;
 import net.minecraftforge.event.entity.player.PlayerContainerEvent;
@@ -34,6 +33,7 @@ import ru.ap4uuk.coreprotect.storage.DatabaseManager.DbBlockAction;
 import ru.ap4uuk.coreprotect.util.ActionContext;
 import ru.ap4uuk.coreprotect.util.BlockLogging;
 import ru.ap4uuk.coreprotect.util.HistoryFormatter;
+import ru.ap4uuk.coreprotect.util.ContainerSnapshotUtil;
 import ru.ap4uuk.coreprotect.util.TextUtil;
 import ru.ap4uuk.coreprotect.util.WorldEditIntegration;
 
@@ -463,23 +463,8 @@ public class ModEvents {
         }
 
         BlockPos pos = blockEntity.getBlockPos().immutable();
-        String serialized = serializeSlots(containerSlots);
+        String serialized = ContainerSnapshotUtil.serializeSlots(containerSlots);
         return new ContainerSnapshot(level.dimension(), pos, serialized);
-    }
-
-    private static String serializeSlots(List<Slot> slots) {
-        return slots.stream()
-                .map(slot -> {
-                    ItemStack stack = slot.getItem();
-                    if (stack.isEmpty()) {
-                        return null;
-                    }
-                    var key = BuiltInRegistries.ITEM.getKey(stack.getItem());
-                    String id = key != null ? key.toString() : stack.getDescriptionId();
-                    return slot.getContainerSlot() + ":" + id + "x" + stack.getCount();
-                })
-                .filter(Objects::nonNull)
-                .collect(Collectors.joining(";", "[", "]"));
     }
 
     private record ContainerKey(java.util.UUID playerId, int containerId) {}

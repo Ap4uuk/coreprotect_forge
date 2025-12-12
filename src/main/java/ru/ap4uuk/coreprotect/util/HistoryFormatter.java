@@ -2,7 +2,9 @@ package ru.ap4uuk.coreprotect.util;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
+import ru.ap4uuk.coreprotect.model.BlockAction;
 import ru.ap4uuk.coreprotect.storage.DatabaseManager;
+import ru.ap4uuk.coreprotect.util.ContainerSnapshotUtil;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -27,8 +29,8 @@ public final class HistoryFormatter {
         Component time = Component.literal(ts).withStyle(ChatFormatting.GRAY);
         Component player = Component.literal(playerName).withStyle(ChatFormatting.AQUA);
         Component action = TextUtil.actionName(actionType);
-        Component oldBlockComponent = TextUtil.blockName(oldBlock);
-        Component newBlockComponent = TextUtil.blockName(newBlock);
+        Component oldBlockComponent = describeState(actionType, oldBlock);
+        Component newBlockComponent = describeState(actionType, newBlock);
 
         return TextUtil.prefixed(Component.translatable(
                 "message.coreprotect.inspect.line",
@@ -48,5 +50,12 @@ public final class HistoryFormatter {
                 history.oldBlock,
                 history.newBlock
         );
+    }
+
+    private static Component describeState(String actionType, String serialized) {
+        if (BlockAction.Type.CONTAINER.name().equals(actionType)) {
+            return ContainerSnapshotUtil.describeSnapshot(serialized);
+        }
+        return TextUtil.blockName(serialized);
     }
 }
