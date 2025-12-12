@@ -166,8 +166,8 @@ public final class DatabaseManager {
         insertBlockStmt.setInt(6, action.pos.getY());
         insertBlockStmt.setInt(7, action.pos.getZ());
         insertBlockStmt.setString(8, action.type.name());
-        insertBlockStmt.setString(9, serializeBlockState(action.oldState));
-        insertBlockStmt.setString(10, serializeBlockState(action.newState));
+        insertBlockStmt.setString(9, serializeActionState(action.oldState, action.oldStateText));
+        insertBlockStmt.setString(10, serializeActionState(action.newState, action.newStateText));
 
         insertBlockStmt.executeUpdate();
     }
@@ -357,7 +357,10 @@ public final class DatabaseManager {
         }
     }
 
-    private String serializeBlockState(BlockState state) {
+    private String serializeActionState(BlockState state, String explicit) {
+        if (explicit != null) {
+            return explicit;
+        }
         if (state == null) {
             return null;
         }
@@ -367,6 +370,10 @@ public final class DatabaseManager {
         }
         // Пока только registry name, позже можно добавить свойства (meta/NBT)
         return key.toString();
+    }
+
+    private String serializeBlockState(BlockState state) {
+        return serializeActionState(state, null);
     }
 
     public static final class DbRollbackAction {

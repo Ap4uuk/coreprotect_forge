@@ -79,6 +79,7 @@ sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 repositories {
     mavenCentral()
+    maven { url = 'https://maven.enginehub.org/repo/' }
 }
 
 dependencies {
@@ -90,6 +91,9 @@ dependencies {
     }
 
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    implementation fg.deobf('com.sk89q.worldedit:worldedit-forge-mc1.20:7.2.15')
+    implementation fg.deobf('com.sk89q.worldedit:worldedit-core:7.2.15')
 }
 
 tasks.named('processResources', ProcessResources).configure {

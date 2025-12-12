@@ -1,5 +1,6 @@
 package ru.ap4uuk.coreprotect.command;
 
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -67,6 +68,6 @@ public final class CommandVariableResolver {
             throw new ParameterException("message.coreprotect.params.dimension_invalid", raw);
         }
 
-        return ResourceKey.create(Level.RESOURCE_KEY, id);
+        return ResourceKey.create(Registries.DIMENSION, id);
     }
 }
