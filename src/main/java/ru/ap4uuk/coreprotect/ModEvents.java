@@ -284,7 +284,8 @@ public class ModEvents {
             Level level = (Level) event.getLevel();
             BlockPos pos = event.getPos();
             BlockEntity be = level.getBlockEntity(pos);
-            if (be instanceof net.minecraft.world.Container container) {
+            net.minecraft.world.Container container = ContainerSnapshotUtil.resolveContainer(level, pos, be);
+            if (container != null) {
                 String before = ContainerSnapshotUtil.serializeContainer(container);
                 CONTAINER_SNAPSHOTS.put(player.getUUID(), new ContainerSnapshot(level.dimension(), pos.immutable(), before));
             }
@@ -315,7 +316,8 @@ public class ModEvents {
         if (!Objects.equals(level.dimension(), before.dimension)) return;
 
         BlockEntity be = level.getBlockEntity(before.pos);
-        if (!(be instanceof net.minecraft.world.Container container)) return;
+        net.minecraft.world.Container container = ContainerSnapshotUtil.resolveContainer(level, before.pos, be);
+        if (container == null) return;
 
         String after = ContainerSnapshotUtil.serializeContainer(container);
         if (Objects.equals(before.serialized, after)) return;

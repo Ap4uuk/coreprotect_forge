@@ -2,6 +2,7 @@ package ru.ap4uuk.coreprotect.util;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -10,10 +11,15 @@ import net.minecraft.nbt.TagParser;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.CompoundContainer;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import ru.ap4uuk.coreprotect.Coreprotect;
 
 import java.util.ArrayList;
@@ -31,6 +37,43 @@ public final class ContainerSnapshotUtil {
     private static final String STACK_KEY = "Item";
 
     private ContainerSnapshotUtil() {
+    }
+
+    public static Container resolveContainer(Level level, BlockPos pos, BlockEntity be) {
+        if (!(be instanceof Container container)) {
+            return null;
+        }
+
+        if (!(be instanceof ChestBlockEntity chest)) {
+            return container;
+        }
+
+        BlockState state = chest.getBlockState();
+        if (!(state.getBlock() instanceof ChestBlock) || state.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
+            return container;
+        }
+
+        Direction connectedDir = ChestBlock.getConnectedDirection(state);
+        BlockPos otherPos = pos.relative(connectedDir);
+        BlockEntity otherBe = level.getBlockEntity(otherPos);
+        if (!(otherBe instanceof ChestBlockEntity otherChest)) {
+            return container;
+        }
+
+        BlockState otherState = otherChest.getBlockState();
+        if (!(otherState.getBlock() instanceof ChestBlock) || otherState.getValue(ChestBlock.TYPE) == ChestType.SINGLE) {
+            return container;
+        }
+
+        Container first = chest;
+        Container second = otherChest;
+
+        if (state.getValue(ChestBlock.TYPE) == ChestType.RIGHT) {
+            first = otherChest;
+            second = chest;
+        }
+
+        return new CompoundContainer(first, second);
     }
 
     public static String serializeSlots(java.util.List<net.minecraft.world.inventory.Slot> slots) {
