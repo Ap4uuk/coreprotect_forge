@@ -78,18 +78,23 @@ public final class DatabaseManager {
                 }
             }
 
-            if (dbFile.getParent() != null) {
-                Files.createDirectories(dbFile.getParent());
+            if (!driverOk) {
+                Coreprotect.LOGGER.error("[Coreprotect] Ни один из указанных JDBC-драйверов не найден: {}", driverClassNames);
+                return;
             }
 
-            String url = "jdbc:sqlite:" + dbFile.toAbsolutePath();
-            Coreprotect.LOGGER.info("[Coreprotect] Подключаемся к SQLite по URL: {}", url);
+            Connection conn;
+            if (username != null && !username.isBlank()) {
+                conn = DriverManager.getConnection(jdbcUrl, username, password == null ? "" : password);
+            } else {
+                conn = DriverManager.getConnection(jdbcUrl);
+            }
 
             Connection conn = DriverManager.getConnection(url);
             initWithConnection(conn, Dialect.SQLITE);
             Coreprotect.LOGGER.info("[Coreprotect] SQLite инициализирован: {}", dbFile.toAbsolutePath());
         } catch (Exception e) {
-            Coreprotect.LOGGER.error("[Coreprotect] Ошибка инициализации SQLite", e);
+            Coreprotect.LOGGER.error("[Coreprotect] Ошибка инициализации SQL подключения", e);
             INSTANCE = null;
         }
     }
