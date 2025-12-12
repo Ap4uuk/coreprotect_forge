@@ -90,16 +90,23 @@ public class ModEvents {
         String storageTypeRaw = CoreprotectConfig.COMMON.storageType.get();
         String storageType = storageTypeRaw == null ? "SQLITE" : storageTypeRaw.toUpperCase(Locale.ROOT);
 
-        switch (storageType) {
-            case "SQLITE" -> {
-                String pathStr = CoreprotectConfig.COMMON.sqlitePath.get();
-                Path dbPath = Paths.get(pathStr);
-                DatabaseManager.initSQLite(dbPath);
-                LOGGER.info("[Coreprotect] База данных (SQLite) инициализирована: {}", dbPath.toAbsolutePath());
-            }
-            case "MARIADB" -> initSqlFromConfig(storageType, DEFAULT_MARIADB_PORT);
-            case "POSTGRESQL" -> initSqlFromConfig(storageType, DEFAULT_POSTGRES_PORT);
-            default -> LOGGER.error("[Coreprotect] Тип хранилища '{}' не поддерживается. Используйте SQLITE, MARIADB или POSTGRESQL.", storageTypeRaw);
+        if ("SQLITE".equals(storageType)) {
+            String pathStr = CoreprotectConfig.COMMON.sqlitePath.get();
+            Path dbPath = Paths.get(pathStr);
+            DatabaseManager.initSQLite(dbPath);
+            LOGGER.info("[Coreprotect] База данных (SQLite) инициализирована: {}", dbPath.toAbsolutePath());
+        } else if ("MARIADB".equals(storageType)) {
+            String url = CoreprotectConfig.COMMON.sqlUrl.get();
+            String user = CoreprotectConfig.COMMON.sqlUser.get();
+            String password = CoreprotectConfig.COMMON.sqlPassword.get();
+            DatabaseManager.initMariaDb(url, user, password);
+        } else if ("POSTGRESQL".equals(storageType)) {
+            String url = CoreprotectConfig.COMMON.sqlUrl.get();
+            String user = CoreprotectConfig.COMMON.sqlUser.get();
+            String password = CoreprotectConfig.COMMON.sqlPassword.get();
+            DatabaseManager.initPostgreSql(url, user, password);
+        } else {
+            LOGGER.error("[Coreprotect] Тип хранилища '{}' не поддерживается. Используйте SQLITE, MARIADB или POSTGRESQL.", storageTypeRaw);
         }
 
         WorldEditIntegration.tryRegister();

@@ -28,16 +28,24 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 public final class DatabaseManager {
 
+    public enum Dialect {
+        SQLITE,
+        MARIADB,
+        POSTGRESQL
+    }
+
     private static DatabaseManager INSTANCE;
 
     private final Connection connection;
+    private final Dialect dialect;
     private final PreparedStatement insertBlockStmt;
     private final BlockingQueue<BlockAction> queue = new LinkedBlockingQueue<>(5000);
     private Thread writerThread;
     private volatile boolean running = true;
 
-    private DatabaseManager(Connection connection) throws SQLException {
+    private DatabaseManager(Connection connection, Dialect dialect) throws SQLException {
         this.connection = connection;
+        this.dialect = dialect;
         this.connection.setAutoCommit(false);
         createTables();
         this.insertBlockStmt = prepareInsertStatement();
@@ -45,38 +53,10 @@ public final class DatabaseManager {
     }
 
     public static synchronized void initSQLite(Path dbFile) {
-        if (INSTANCE != null) {
-            Coreprotect.LOGGER.warn("[Coreprotect] DatabaseManager уже инициализирован.");
-            return;
-        }
-
-        try {
-            if (dbFile.getParent() != null) {
-                Files.createDirectories(dbFile.getParent());
-            }
-
-            String url = "jdbc:sqlite:" + dbFile.toAbsolutePath();
-            Coreprotect.LOGGER.info("[Coreprotect] Подключаемся к SQLite по URL: {}", url);
-
-            initSql(List.of(
-                    "ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC",
-                    "org.sqlite.JDBC"
-            ), url, null, null, 1);
-
-            if (INSTANCE != null) {
-                Coreprotect.LOGGER.info("[Coreprotect] SQLite инициализирован: {}", dbFile.toAbsolutePath());
-            }
-        } catch (Exception e) {
-            Coreprotect.LOGGER.error("[Coreprotect] Ошибка инициализации SQLite", e);
-            INSTANCE = null;
-        }
+        initSQLite(dbFile, true);
     }
 
-    public static synchronized void initSql(List<String> driverClassNames,
-                                            String jdbcUrl,
-                                            String username,
-                                            String password,
-                                            int connectionPoolSize) {
+    public static synchronized void initSQLite(Path dbFile, boolean allowShaded) {
         if (INSTANCE != null) {
             Coreprotect.LOGGER.warn("[Coreprotect] DatabaseManager уже инициализирован.");
             return;
@@ -84,18 +64,17 @@ public final class DatabaseManager {
 
         try {
             boolean driverOk = false;
-            String activeDriver = null;
+            if (allowShaded) {
+                driverOk = tryLoadDriver("ru.ap4uuk.coreprotect.shaded.org.sqlite.JDBC",
+                        "[Coreprotect] Драйвер SQLite найден (shaded): {}");
+            }
 
-            for (String driverClassName : driverClassNames) {
-                if (driverClassName == null || driverClassName.isBlank()) continue;
-                try {
-                    Class.forName(driverClassName.trim());
-                    driverOk = true;
-                    activeDriver = driverClassName.trim();
-                    Coreprotect.LOGGER.info("[Coreprotect] Драйвер найден: {}", activeDriver);
-                    break;
-                } catch (ClassNotFoundException e) {
-                    Coreprotect.LOGGER.debug("[Coreprotect] Драйвер {} не найден в classpath.", driverClassName);
+            if (!driverOk) {
+                driverOk = tryLoadDriver("org.sqlite.JDBC",
+                        "[Coreprotect] Драйвер SQLite найден: {}");
+                if (!driverOk) {
+                    Coreprotect.LOGGER.error("[Coreprotect] Драйвер SQLite не найден в classpath! Проверь shadow/shade.");
+                    return;
                 }
             }
 
@@ -111,23 +90,75 @@ public final class DatabaseManager {
                 conn = DriverManager.getConnection(jdbcUrl);
             }
 
-            if (conn == null) {
-                Coreprotect.LOGGER.error("[Coreprotect] DriverManager вернул null при подключении.");
-                return;
-            }
-
-            Coreprotect.LOGGER.info("[Coreprotect] Размер пула подключений: {}", connectionPoolSize);
-
-            INSTANCE = new DatabaseManager(conn);
-            Coreprotect.LOGGER.info("[Coreprotect] SQL подключение установлено по URL: {} (driver: {})", jdbcUrl, activeDriver);
+            Connection conn = DriverManager.getConnection(url);
+            initWithConnection(conn, Dialect.SQLITE);
+            Coreprotect.LOGGER.info("[Coreprotect] SQLite инициализирован: {}", dbFile.toAbsolutePath());
         } catch (Exception e) {
             Coreprotect.LOGGER.error("[Coreprotect] Ошибка инициализации SQL подключения", e);
             INSTANCE = null;
         }
     }
 
+    public static synchronized void initMariaDb(String url, String user, String password) {
+        initWithDriver("org.mariadb.jdbc.Driver", url, user, password, Dialect.MARIADB, "MariaDB");
+    }
+
+    public static synchronized void initPostgreSql(String url, String user, String password) {
+        initWithDriver("org.postgresql.Driver", url, user, password, Dialect.POSTGRESQL, "PostgreSQL");
+    }
+
     public static DatabaseManager get() {
         return INSTANCE;
+    }
+
+    private static boolean tryLoadDriver(String className, String successLog) {
+        try {
+            Class.forName(className);
+            Coreprotect.LOGGER.info(successLog, className);
+            return true;
+        } catch (ClassNotFoundException ignored) {
+            return false;
+        }
+    }
+
+    private static synchronized void initWithDriver(String driverClass,
+                                                     String url,
+                                                     String user,
+                                                     String password,
+                                                     Dialect dialect,
+                                                     String label) {
+        if (INSTANCE != null) {
+            Coreprotect.LOGGER.warn("[Coreprotect] DatabaseManager уже инициализирован.");
+            return;
+        }
+
+        try {
+            if (!tryLoadDriver(driverClass, "[Coreprotect] Драйвер {} найден")) {
+                Coreprotect.LOGGER.error("[Coreprotect] Драйвер {} не найден в classpath!", driverClass);
+                return;
+            }
+
+            Connection conn;
+            if (user == null && password == null) {
+                conn = DriverManager.getConnection(url);
+            } else {
+                conn = DriverManager.getConnection(url, user, password);
+            }
+
+            initWithConnection(conn, dialect);
+            Coreprotect.LOGGER.info("[Coreprotect] {} инициализирован: {}", label, url);
+        } catch (Exception e) {
+            Coreprotect.LOGGER.error("[Coreprotect] Ошибка инициализации {}", label, e);
+            INSTANCE = null;
+        }
+    }
+
+    public static synchronized void initWithConnection(Connection connection, Dialect dialect) throws SQLException {
+        if (INSTANCE != null) {
+            Coreprotect.LOGGER.warn("[Coreprotect] DatabaseManager уже инициализирован.");
+            return;
+        }
+        INSTANCE = new DatabaseManager(connection, dialect);
     }
 
     public static synchronized void shutdown() {
@@ -406,10 +437,12 @@ public final class DatabaseManager {
     }
 
     private void createTables() throws SQLException {
+        String pk = primaryKeyDefinition();
+        String restoredType = booleanColumnDefinition();
         try (Statement st = connection.createStatement()) {
             st.execute("""
                 CREATE TABLE IF NOT EXISTS block_actions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id %s,
                     time_epoch INTEGER NOT NULL,
                     player_uuid TEXT NOT NULL,
                     player_name TEXT NOT NULL,
@@ -420,32 +453,25 @@ public final class DatabaseManager {
                     action_type TEXT NOT NULL,
                     old_block TEXT,
                     new_block TEXT
-                );
-                """);
+                )
+                """.formatted(pk));
 
-            st.execute("""
-                CREATE INDEX IF NOT EXISTS idx_block_actions_pos
-                ON block_actions (dimension, x, y, z);
-                """);
-
-            st.execute("""
-                CREATE INDEX IF NOT EXISTS idx_block_actions_player_time
-                ON block_actions (player_uuid, time_epoch);
-                """);
+            createIndexIfMissing("block_actions", "idx_block_actions_pos", "dimension, x, y, z");
+            createIndexIfMissing("block_actions", "idx_block_actions_player_time", "player_uuid, time_epoch");
 
             st.execute("""
                 CREATE TABLE IF NOT EXISTS rollback_sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id %s,
                     time_epoch INTEGER NOT NULL,
                     executor TEXT NOT NULL,
                     params TEXT NOT NULL,
-                    restored INTEGER NOT NULL DEFAULT 0
-                );
-                """);
+                    restored %s
+                )
+                """.formatted(pk, restoredType));
 
             st.execute("""
                 CREATE TABLE IF NOT EXISTS rollback_session_entries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id %s,
                     session_id INTEGER NOT NULL,
                     dimension TEXT NOT NULL,
                     x INTEGER NOT NULL,
@@ -454,8 +480,8 @@ public final class DatabaseManager {
                     before_block TEXT NOT NULL,
                     after_block TEXT NOT NULL,
                     FOREIGN KEY (session_id) REFERENCES rollback_sessions(id)
-                );
-                """);
+                )
+                """.formatted(pk));
         }
         connection.commit();
     }
@@ -465,8 +491,43 @@ public final class DatabaseManager {
             INSERT INTO block_actions (
                 time_epoch, player_uuid, player_name, dimension,
                 x, y, z, action_type, old_block, new_block
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """);
+    }
+
+    private String primaryKeyDefinition() {
+        return switch (dialect) {
+            case SQLITE -> "INTEGER PRIMARY KEY AUTOINCREMENT";
+            case MARIADB -> "INTEGER PRIMARY KEY AUTO_INCREMENT";
+            case POSTGRESQL -> "SERIAL PRIMARY KEY";
+        };
+    }
+
+    private String booleanColumnDefinition() {
+        return switch (dialect) {
+            case SQLITE -> "INTEGER NOT NULL DEFAULT 0";
+            case MARIADB, POSTGRESQL -> "BOOLEAN NOT NULL DEFAULT FALSE";
+        };
+    }
+
+    private void createIndexIfMissing(String table, String indexName, String columns) throws SQLException {
+        if (indexExists(table, indexName)) return;
+        try (Statement st = connection.createStatement()) {
+            st.execute("CREATE INDEX " + indexName + " ON " + table + " (" + columns + ")");
+        }
+    }
+
+    private boolean indexExists(String table, String indexName) throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        try (ResultSet rs = metaData.getIndexInfo(null, null, table, false, false)) {
+            while (rs.next()) {
+                String existing = rs.getString("INDEX_NAME");
+                if (existing != null && existing.equalsIgnoreCase(indexName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public void logBlockAction(BlockAction action) {
@@ -797,9 +858,33 @@ public final class DatabaseManager {
         if (connection == null) return -1;
 
         String sql = """
-        INSERT INTO rollback_sessions (time_epoch, executor, params, restored)
-        VALUES (?, ?, ?, 0);
+        INSERT INTO rollback_sessions (time_epoch, executor, params)
+        VALUES (?, ?, ?)
         """;
+
+        if (dialect == Dialect.POSTGRESQL) {
+            sql += " RETURNING id";
+            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+                long nowEpoch = System.currentTimeMillis() / 1000L;
+
+                ps.setLong(1, nowEpoch);
+                ps.setString(2, executor);
+                ps.setString(3, params);
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        int id = rs.getInt(1);
+                        connection.commit();
+                        return id;
+                    }
+                }
+                connection.rollback();
+            } catch (SQLException e) {
+                Coreprotect.LOGGER.error("[Coreprotect] Ошибка создания rollback-сессии", e);
+                try { connection.rollback(); } catch (SQLException ignored) {}
+            }
+            return -1;
+        }
 
         try (PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             long nowEpoch = System.currentTimeMillis() / 1000L;
