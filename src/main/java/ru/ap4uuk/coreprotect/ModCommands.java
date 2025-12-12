@@ -1,6 +1,7 @@
 package ru.ap4uuk.coreprotect;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.minecraft.ChatFormatting;
@@ -154,6 +155,16 @@ public class ModCommands {
                                     return 1;
                                 })
                         )
+                        .then(Commands.literal("ipage")
+                                .requires(src -> EnumPermissions.INSPECT.hasPermission(src))
+                                .then(Commands.argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> {
+                                            ServerPlayer player = ctx.getSource().getPlayerOrException();
+                                            int page = IntegerArgumentType.getInteger(ctx, "page");
+                                            return executeInspectPage(player, page);
+                                        })
+                                )
+                        )
                         .then(Commands.literal("lookup")
                                 .requires(src -> EnumPermissions.LOOKUP.hasPermission(src))
                                 .then(Commands.argument("params", StringArgumentType.greedyString())
@@ -257,6 +268,35 @@ public class ModCommands {
         } catch (IllegalArgumentException e) {
             return null;
         }
+    }
+
+    private static int executeInspectPage(ServerPlayer player, int page) {
+        InspectManager.InspectSession current = InspectManager.getCurrentSession(player);
+        if (current == null) {
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.no_session"));
+            return 0;
+        }
+
+        InspectManager.InspectSession session = InspectManager.setPage(player, page - 1);
+        if (session == null) {
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.page_out_of_range"));
+            return 0;
+        }
+
+        var server = player.getServer();
+        if (server == null) {
+            return 0;
+        }
+
+        Level level = server.getLevel(session.dimension());
+        if (level == null) {
+            InspectManager.resetPagination(player);
+            player.sendSystemMessage(TextUtil.translate("message.coreprotect.inspect.dimension_unavailable"));
+            return 0;
+        }
+
+        renderInspectHistory(player, level, session);
+        return 1;
     }
 
     private static int executeLookup(ServerPlayer player, String paramsStr) {

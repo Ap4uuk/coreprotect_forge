@@ -60,6 +60,24 @@ public final class InspectManager {
         INSPECT_SESSIONS.remove(player.getUUID());
     }
 
+    public static InspectSession setPage(ServerPlayer player, int page) {
+        if (page < 0) return null;
+
+        UUID uuid = player.getUUID();
+        InspectSession current = INSPECT_SESSIONS.get(uuid);
+        if (current == null) {
+            return null;
+        }
+
+        InspectSession updated = new InspectSession(current.dimension, current.pos, page);
+        INSPECT_SESSIONS.put(uuid, updated);
+        return updated;
+    }
+
+    public static InspectSession getCurrentSession(ServerPlayer player) {
+        return INSPECT_SESSIONS.get(player.getUUID());
+    }
+
     public record InspectSession(ResourceKey<Level> dimension, BlockPos pos, int page) {
         public boolean sameTarget(ResourceKey<Level> otherDimension, BlockPos otherPos) {
             return dimension.equals(otherDimension) && pos.equals(otherPos);

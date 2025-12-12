@@ -255,6 +255,33 @@ public final class DatabaseManager {
         return result;
     }
 
+    public synchronized int getBlockHistoryCount(ResourceKey<Level> dimension, BlockPos pos) {
+        if (connection == null) return 0;
+
+        String sql = """
+            SELECT COUNT(*) AS total
+            FROM block_actions
+            WHERE dimension = ? AND x = ? AND y = ? AND z = ?;
+            """;
+
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, dimension.location().toString());
+            ps.setInt(2, pos.getX());
+            ps.setInt(3, pos.getY());
+            ps.setInt(4, pos.getZ());
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("total");
+                }
+            }
+        } catch (SQLException e) {
+            Coreprotect.LOGGER.error("[Coreprotect] Ошибка подсчёта истории блока в БД", e);
+        }
+
+        return 0;
+    }
+
     public synchronized List<DbLookupResult> getLookupHistory(ResourceKey<Level> dimension,
                                                               BlockPos center,
                                                               int radius,
