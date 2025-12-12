@@ -26,7 +26,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -36,8 +35,10 @@ public final class ContainerSnapshotUtil {
     private static final String SLOT_KEY = "Slot";
     private static final String STACK_KEY = "Item";
 
-    private ContainerSnapshotUtil() {
-    }
+    // ключ для обёртки списка в compound (для парсера, который ожидает "{...}")
+    private static final String WRAP_KEY = "cp_list";
+
+    private ContainerSnapshotUtil() {}
 
     public static Container resolveContainer(Level level, BlockPos pos, BlockEntity be) {
         if (!(be instanceof Container container)) {
@@ -76,28 +77,24 @@ public final class ContainerSnapshotUtil {
         return new CompoundContainer(first, second);
     }
 
-    public static String serializeSlots(java.util.List<net.minecraft.world.inventory.Slot> slots) {
+    public static String serializeSlots(List<net.minecraft.world.inventory.Slot> slots) {
         ListTag list = new ListTag();
         for (net.minecraft.world.inventory.Slot slot : slots) {
             ItemStack stack = slot.getItem();
-            if (stack.isEmpty()) {
-                continue;
-            }
+            if (stack.isEmpty()) continue;
             list.add(serializeEntry(slot.getContainerSlot(), stack));
         }
-        return list.toString();
+        return list.toString(); // SNBT list: [...]
     }
 
     public static String serializeContainer(Container container) {
         ListTag list = new ListTag();
         for (int i = 0; i < container.getContainerSize(); i++) {
             ItemStack stack = container.getItem(i);
-            if (stack.isEmpty()) {
-                continue;
-            }
+            if (stack.isEmpty()) continue;
             list.add(serializeEntry(i, stack));
         }
-        return list.toString();
+        return list.toString(); // SNBT list: [...]
     }
 
     private static CompoundTag serializeEntry(int slotIndex, ItemStack stack) {
@@ -107,34 +104,79 @@ public final class ContainerSnapshotUtil {
         return entry;
     }
 
-    public static Map<Integer, ItemStack> deserializeSnapshot(String serialized) {
-        if (serialized == null || serialized.isBlank()) {
-            return Map.of();
+    /**
+     * Парсит снапшот контейнера, который хранится как SNBT:
+     * - "[]" или "[{...}, {...}]"
+     *
+     * Важно: TagParser.parseTag ожидает "{...}" (CompoundTag).
+     * Поэтому списки мы оборачиваем в compound: "{cp_list:[...]}" и достаем cp_list.
+     */
+    private static ListTag parseSnapshotList(String serialized) throws Exception {
+        serialized = normalizeSerialized(serialized);
+
+        // пустая строка
+        if (serialized.isEmpty()) {
+            return new ListTag();
         }
 
+        // список SNBT
+        if (serialized.startsWith("[")) {
+            // оборачиваем в compound, чтобы parseTag не ругался "Expected '{'"
+            CompoundTag root = TagParser.parseTag("{" + WRAP_KEY + ":" + serialized + "}");
+            // 10 = Tag.TAG_COMPOUND (элементы списка у нас CompoundTag)
+            return root.getList(WRAP_KEY, 10);
+        }
+
+        // если вдруг кто-то уже хранит как compound {cp_list:[...]}
+        if (serialized.startsWith("{")) {
+            CompoundTag root = TagParser.parseTag(serialized);
+
+            if (root.contains(WRAP_KEY, 9)) { // 9 = list
+                return root.getList(WRAP_KEY, 10);
+            }
+
+            // не наш формат
+            return new ListTag();
+        }
+
+        // неизвестный формат
+        return new ListTag();
+    }
+
+    private static String normalizeSerialized(String serialized) {
+        if (serialized == null) return "";
+
         serialized = serialized.trim();
+
+        // иногда из SQL прилетает в кавычках
         if ((serialized.startsWith("\"") && serialized.endsWith("\""))
                 || (serialized.startsWith("'") && serialized.endsWith("'"))) {
             serialized = serialized.substring(1, serialized.length() - 1).trim();
         }
 
+        return serialized;
+    }
+
+    public static Map<Integer, ItemStack> deserializeSnapshot(String serialized) {
+        if (serialized == null || serialized.isBlank()) {
+            return Map.of();
+        }
+
         try {
-            Tag parsed = TagParser.parseTag(serialized);
-            if (!(parsed instanceof ListTag listTag)) {
+            ListTag listTag = parseSnapshotList(serialized);
+            if (listTag.isEmpty()) {
                 return Map.of();
             }
 
             Map<Integer, ItemStack> items = new HashMap<>();
             for (Tag element : listTag) {
-                if (!(element instanceof CompoundTag entry)) {
-                    continue;
-                }
-                if (!entry.contains(SLOT_KEY) || !entry.contains(STACK_KEY)) {
-                    continue;
-                }
+                if (!(element instanceof CompoundTag entry)) continue;
+                if (!entry.contains(SLOT_KEY) || !entry.contains(STACK_KEY)) continue;
+
                 int slot = entry.getInt(SLOT_KEY);
                 CompoundTag stackTag = entry.getCompound(STACK_KEY);
                 ItemStack stack = ItemStack.of(stackTag);
+
                 if (!stack.isEmpty()) {
                     items.put(slot, stack);
                 }
@@ -142,19 +184,31 @@ public final class ContainerSnapshotUtil {
 
             return items;
         } catch (Exception e) {
-            Coreprotect.LOGGER.warn("[Coreprotect] Не удалось десериализовать содержимое контейнера '{}': {}",
-                    serialized, e.getMessage());
+            Coreprotect.LOGGER.warn(
+                    "[Coreprotect] Не удалось десериализовать содержимое контейнера '{}': {}",
+                    normalizeSerialized(serialized), e.getMessage()
+            );
             return Map.of();
         }
     }
 
     public static boolean isSerializedSnapshot(String serialized) {
+        if (serialized == null || serialized.isBlank()) return false;
+
+        serialized = normalizeSerialized(serialized);
+
+        // быстрый путь
+        if (serialized.startsWith("[")) return true;
+
         try {
-            Tag parsed = TagParser.parseTag(serialized);
-            return parsed instanceof ListTag;
-        } catch (Exception ignored) {
-            return false;
-        }
+            // если кто-то хранит в wrapped формате "{cp_list:[...]}"
+            if (serialized.startsWith("{")) {
+                CompoundTag root = TagParser.parseTag(serialized);
+                return root.contains(WRAP_KEY, 9); // 9 = list
+            }
+        } catch (Exception ignored) {}
+
+        return false;
     }
 
     public static Component describeSnapshot(String serialized) {
@@ -215,9 +269,8 @@ public final class ContainerSnapshotUtil {
     }
 
     private static void accumulate(Map<ItemKey, Integer> diffs, ItemStack stack, int delta) {
-        if (stack.isEmpty() || delta == 0) {
-            return;
-        }
+        if (stack.isEmpty() || delta == 0) return;
+
         ItemKey key = ItemKey.from(stack);
         diffs.merge(key, delta, Integer::sum);
         if (diffs.get(key) == 0) {
@@ -243,9 +296,7 @@ public final class ContainerSnapshotUtil {
     }
 
     private static Component joinComponents(List<Component> components) {
-        if (components.isEmpty()) {
-            return Component.empty();
-        }
+        if (components.isEmpty()) return Component.empty();
 
         MutableComponent out = Component.empty();
         boolean first = true;
@@ -279,13 +330,13 @@ public final class ContainerSnapshotUtil {
     }
 
     public static boolean applySnapshot(Level level, BlockPos pos, String serialized) {
-        if (serialized == null) {
-            return false;
-        }
+        if (serialized == null) return false;
+
         BlockEntity blockEntity = level.getBlockEntity(pos);
         if (!(blockEntity instanceof Container container)) {
             return false;
         }
+
         boolean applied = applySnapshot(container, serialized);
         if (applied) {
             blockEntity.setChanged();
@@ -295,6 +346,8 @@ public final class ContainerSnapshotUtil {
 
     public static boolean applySnapshot(Container container, String serialized) {
         Map<Integer, ItemStack> items = deserializeSnapshot(serialized);
+
+        // пустой снапшот -> очистить контейнер
         if (items.isEmpty()) {
             for (int i = 0; i < container.getContainerSize(); i++) {
                 container.setItem(i, ItemStack.EMPTY);
@@ -309,10 +362,10 @@ public final class ContainerSnapshotUtil {
         return true;
     }
 
-    public record ContainerChange(Component removed, Component added) {
-    }
+    public record ContainerChange(Component removed, Component added) {}
 
     private record ItemKey(ResourceLocation itemId, CompoundTag tag) implements Comparable<ItemKey> {
+
         private static ItemKey from(ItemStack stack) {
             CompoundTag tag = stack.save(new CompoundTag());
             tag.remove("Count");
@@ -320,16 +373,13 @@ public final class ContainerSnapshotUtil {
         }
 
         private String displayName() {
-            // Можно заменить на локализованное имя, если нужно
             return itemId().toString();
         }
 
         @Override
         public int compareTo(ItemKey other) {
             int cmp = this.itemId.compareTo(other.itemId);
-            if (cmp != 0) {
-                return cmp;
-            }
+            if (cmp != 0) return cmp;
             return this.tag.toString().compareTo(other.tag.toString());
         }
     }
