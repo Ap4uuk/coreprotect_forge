@@ -29,8 +29,13 @@ public final class HistoryFormatter {
         Component time = Component.literal(ts).withStyle(ChatFormatting.GRAY);
         Component player = Component.literal(playerName).withStyle(ChatFormatting.AQUA);
         Component action = TextUtil.actionName(actionType);
-        Component oldBlockComponent = describeState(actionType, oldBlock);
-        Component newBlockComponent = describeState(actionType, newBlock);
+        ContainerSnapshotUtil.ContainerChange containerChange = null;
+        if (BlockAction.Type.CONTAINER.name().equals(actionType)) {
+            containerChange = ContainerSnapshotUtil.describeChange(oldBlock, newBlock);
+        }
+
+        Component oldBlockComponent = describeState(actionType, oldBlock, containerChange, true);
+        Component newBlockComponent = describeState(actionType, newBlock, containerChange, false);
 
         return TextUtil.prefixed(Component.translatable(
                 "message.coreprotect.inspect.line",
@@ -52,9 +57,12 @@ public final class HistoryFormatter {
         );
     }
 
-    private static Component describeState(String actionType, String serialized) {
-        if (BlockAction.Type.CONTAINER.name().equals(actionType)) {
-            return ContainerSnapshotUtil.describeSnapshot(serialized);
+    private static Component describeState(String actionType,
+                                           String serialized,
+                                           ContainerSnapshotUtil.ContainerChange containerChange,
+                                           boolean isOldState) {
+        if (BlockAction.Type.CONTAINER.name().equals(actionType) && containerChange != null) {
+            return isOldState ? containerChange.removed() : containerChange.added();
         }
         return TextUtil.blockName(serialized);
     }
